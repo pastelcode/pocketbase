@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public typealias CustomFetch = @Sendable (URLRequest) async throws -> (Data, URLResponse)
 

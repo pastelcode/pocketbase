@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 open class PocketBase: @unchecked Sendable {
     open var baseURL: String

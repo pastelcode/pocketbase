@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public typealias UnsubscribeFunc = @Sendable () async throws -> Void
 public typealias RealtimeCallback = @Sendable ([String: Any]) -> Void
