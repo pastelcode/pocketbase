@@ -297,8 +297,14 @@ open class RealtimeService: BaseService, @unchecked Sendable {
                 connectTimeoutTask = nil
             }
 
+            // Retain the owning client for the lifetime of this task: `client`
+            // is an unowned reference and the task may outlive the caller that
+            // holds the client.
+            let client = self.client
             Task { [weak self] in
                 guard let self = self else { return }
+                _ = client
+
                 do {
                     try await self.submitSubscriptions()
                 } catch {
@@ -469,7 +475,14 @@ open class RealtimeService: BaseService, @unchecked Sendable {
             }
 
             if shouldStart {
-                Task { await self.processPendingSubmits() }
+                // Retain the owning client for the lifetime of the processing
+                // task: `client` is an unowned reference and the task may
+                // outlive the caller that holds the client.
+                let client = self.client
+                Task {
+                    _ = client
+                    await self.processPendingSubmits()
+                }
             }
         }
     }
