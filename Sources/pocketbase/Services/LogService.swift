@@ -56,4 +56,16 @@ open class LogService: BaseService, @unchecked Sendable {
         opt.applyDefaultMethod("GET")
         return try await client.send(path: "/api/logs/stats", options: opt)
     }
+
+    /// Deletes all stored log entries.
+    ///
+    /// - Parameter options: Additional send options. The `DELETE` method is applied by default.
+    /// - Returns: `true` when the logs are truncated.
+    /// - Throws: A ``ClientResponseError`` when the request fails.
+    open func truncate(options: SendOptions? = nil) async throws -> Bool {
+        var opt = options ?? SendOptions()
+        opt.applyDefaultMethod("DELETE")
+        let _: Data = try await client.sendRaw(path: "/api/logs", options: opt)
+        return true
+    }
 }

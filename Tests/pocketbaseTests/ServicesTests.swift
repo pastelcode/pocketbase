@@ -101,4 +101,21 @@ struct ServicesTests {
         #expect(sqlResult.affectedRows == 1)
         #expect(sqlResult.columns.first?.name == "id")
     }
+
+    @Test func testLogServiceTruncate() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let fetchMock = FetchMock()
+
+        await fetchMock.on(RequestMock(
+            method: "DELETE",
+            url: "http://127.0.0.1:8090/api/logs",
+            replyCode: 204
+        ))
+
+        var opt = SendOptions()
+        opt.fetch = await fetchMock.customFetch()
+
+        let result = try await client.logs.truncate(options: opt)
+        #expect(result == true)
+    }
 }
