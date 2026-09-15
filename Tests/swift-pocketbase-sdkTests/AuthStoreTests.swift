@@ -96,13 +96,24 @@ struct AuthStoreTests {
         let record = RecordModel(id: "async1", collectionId: "col1", collectionName: "users")
         store.save(token: "async_token", record: record)
 
-        try await Task.sleep(nanoseconds: 50_000_000)
-        let saved = await actor.getPayload()
+        // The store persists asynchronously, so poll rather than assuming a
+        // fixed scheduling delay (the simulator can be slower than 50ms).
+        var saved = ""
+        for _ in 0..<100 {
+            saved = await actor.getPayload()
+            if saved.contains("async_token") { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
         #expect(saved.contains("async_token"))
 
         store.clear()
-        try await Task.sleep(nanoseconds: 50_000_000)
-        let cleared = await actor.getPayload()
+
+        var cleared = ""
+        for _ in 0..<100 {
+            cleared = await actor.getPayload()
+            if cleared == "CLEARED" { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
         #expect(cleared == "CLEARED")
     }
 }
