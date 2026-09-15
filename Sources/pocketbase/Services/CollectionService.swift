@@ -14,6 +14,9 @@ open class CollectionService: CrudService<CollectionModel>, @unchecked Sendable 
     ///
     /// Existing collections with matching names are updated, and new ones are created.
     ///
+    /// - Note: Named `importCollections` because `import` is a reserved Swift
+    ///   keyword. The reference SDK exposes the same operation as `import`.
+    ///
     /// - Parameter collections: The collections to import.
     /// - Parameter deleteMissing: Whether collections absent from `collections` should be deleted.
     /// - Parameter options: Additional send options. The `PUT` method and JSON body are applied by default.
