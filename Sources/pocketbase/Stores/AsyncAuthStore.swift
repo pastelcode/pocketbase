@@ -26,38 +26,50 @@ open class AsyncAuthStore: BaseAuthStore, @unchecked Sendable {
 
     private let saveFunc: AsyncSaveFunc
     private let clearFunc: AsyncClearFunc?
-    private let queueActor = QueueActor()
+    private let queue = AsyncOperationQueue()
 
-    private actor QueueActor {
-        private var taskQueue: [@Sendable () async -> Void] = []
     /// Serial FIFO queue for the async save/clear operations.
     ///
     /// `enqueue` is synchronous so the call order is preserved: `clear()`
     /// triggers a polymorphic `save("")` from the base class before queueing
     /// its own operation, and both must run in that order.
+    private final class AsyncOperationQueue: @unchecked Sendable {
+        private let lock = NSLock()
+        private var operations: [@Sendable () async -> Void] = []
         private var isProcessing = false
 
-        func enqueue(_ block: @escaping @Sendable () async -> Void) {
-            taskQueue.append(block)
-            if !isProcessing {
         /// Appends `operation` and starts processing when the queue is idle.
+        func enqueue(_ operation: @escaping @Sendable () async -> Void) {
+            lock.lock()
+            operations.append(operation)
+            let shouldStart = !isProcessing
+            if shouldStart {
                 isProcessing = true
-                Task {
-                    await processNext()
-                }
+            }
+            lock.unlock()
+
+            if shouldStart {
+                Task { await self.process() }
             }
         }
 
-        private func processNext() async {
-            guard !taskQueue.isEmpty else {
         /// Removes and returns the next queued operation, or `nil` when drained.
+        private func nextOperation() -> (@Sendable () async -> Void)? {
+            lock.lock()
+            defer { lock.unlock() }
+
+            if operations.isEmpty {
                 isProcessing = false
-                return
-        /// Runs queued operations one at a time in FIFO order.
+                return nil
             }
-            let next = taskQueue.removeFirst()
-            await next()
-            await processNext()
+            return operations.removeFirst()
+        }
+
+        /// Runs queued operations one at a time in FIFO order.
+        private func process() async {
+            while let operation = nextOperation() {
+                await operation()
+            }
         }
     }
 
@@ -106,11 +118,8 @@ open class AsyncAuthStore: BaseAuthStore, @unchecked Sendable {
 
         let saveClosure = self.saveFunc
         let payloadValue = jsonString
-        let actor = self.queueActor
-        Task {
-            await actor.enqueue {
-                try? await saveClosure(payloadValue)
-            }
+        queue.enqueue {
+            try? await saveClosure(payloadValue)
         }
     }
 
@@ -122,14 +131,11 @@ open class AsyncAuthStore: BaseAuthStore, @unchecked Sendable {
 
         let clearClosure = self.clearFunc
         let saveClosure = self.saveFunc
-        let actor = self.queueActor
-        Task {
-            await actor.enqueue {
-                if let clear = clearClosure {
-                    try? await clear()
-                } else {
-                    try? await saveClosure("")
-                }
+        queue.enqueue {
+            if let clear = clearClosure {
+                try? await clear()
+            } else {
+                try? await saveClosure("")
             }
         }
     }

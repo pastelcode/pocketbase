@@ -114,7 +114,7 @@ struct AuthStoreTests {
             if cleared == "CLEARED" { break }
             try await Task.sleep(nanoseconds: 5_000_000)
         }
-        #expect(cleared == "CLEARED")
+        #expect(cleared == "CLEARED", "unexpected payload: \(cleared.prefix(80))")
     }
 }
 
