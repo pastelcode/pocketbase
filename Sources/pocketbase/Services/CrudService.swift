@@ -19,7 +19,6 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
         fatalError("baseCrudPath must be overridden by subclass")
     }
 
-    open func getFullList<T: Codable & Sendable>(batch: Int = 1000, options: SendOptions? = nil) async throws -> [T] {
     /// Returns all records matching the options, fetching pages internally
     /// until the result set is exhausted.
     ///
@@ -29,8 +28,10 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
     /// - Parameter options: Request options such as a filter or sort order.
     /// - Returns: All matching items.
     /// - Throws: A ``ClientResponseError`` if a page request fails.
+    open func getFullList<T: Codable & Sendable>(options: SendOptions? = nil) async throws -> [T] {
         var opt = options ?? SendOptions()
-        opt.query["skipTotal"] = AnyCodable(1)
+        let batch = opt.batch ?? 1000
+        opt.applyDefaultQuery(["skipTotal": AnyCodable(1)])
 
         var result: [T] = []
         var page = 1
@@ -57,9 +58,11 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
     /// - Throws: A ``ClientResponseError`` if the request fails.
     open func getList<T: Codable & Sendable>(page: Int = 1, perPage: Int = 30, options: SendOptions? = nil) async throws -> ListResult<T> {
         var opt = options ?? SendOptions()
-        opt.method = "GET"
-        opt.query["page"] = AnyCodable(page)
-        opt.query["perPage"] = AnyCodable(perPage)
+        opt.applyDefaultMethod("GET")
+        opt.applyDefaultQuery([
+            "page": AnyCodable(page),
+            "perPage": AnyCodable(perPage)
+        ])
 
         return try await client.send(path: baseCrudPath, options: opt)
     }
@@ -77,8 +80,10 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
         if opt.requestKey == nil {
             opt.requestKey = "one_by_filter_\(baseCrudPath)_\(filter)"
         }
-        opt.query["filter"] = AnyCodable(filter)
-        opt.query["skipTotal"] = AnyCodable(1)
+        opt.applyDefaultQuery([
+            "filter": AnyCodable(filter),
+            "skipTotal": AnyCodable(1)
+        ])
 
         let list: ListResult<T> = try await getList(page: 1, perPage: 1, options: opt)
         guard let first = list.items.first else {
@@ -116,8 +121,8 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
         }
 
         var opt = options ?? SendOptions()
-        opt.method = "GET"
-        let encodedId = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        opt.applyDefaultMethod("GET")
+        let encodedId = id.encodeURIComponent()
         return try await client.send(path: "\(baseCrudPath)/\(encodedId)", options: opt)
     }
 
@@ -130,10 +135,8 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
     /// - Throws: A ``ClientResponseError`` if the request fails.
     open func create<T: Codable & Sendable>(bodyParams: SendOptions.AnySendableBody? = nil, options: SendOptions? = nil) async throws -> T {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        if let body = bodyParams {
-            opt.body = body
-        }
+        opt.applyDefaultMethod("POST")
+        opt.applyDefaultBody(bodyParams)
         return try await client.send(path: baseCrudPath, options: opt)
     }
 
@@ -147,11 +150,9 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
     /// - Throws: A ``ClientResponseError`` if the request fails.
     open func update<T: Codable & Sendable>(id: String, bodyParams: SendOptions.AnySendableBody? = nil, options: SendOptions? = nil) async throws -> T {
         var opt = options ?? SendOptions()
-        opt.method = "PATCH"
-        if let body = bodyParams {
-            opt.body = body
-        }
-        let encodedId = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        opt.applyDefaultMethod("PATCH")
+        opt.applyDefaultBody(bodyParams)
+        let encodedId = id.encodeURIComponent()
         return try await client.send(path: "\(baseCrudPath)/\(encodedId)", options: opt)
     }
 
@@ -164,8 +165,8 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
     /// - Throws: A ``ClientResponseError`` if the request fails.
     open func delete(id: String, options: SendOptions? = nil) async throws -> Bool {
         var opt = options ?? SendOptions()
-        opt.method = "DELETE"
-        let encodedId = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        opt.applyDefaultMethod("DELETE")
+        let encodedId = id.encodeURIComponent()
         let _: Data = try await client.sendRaw(path: "\(baseCrudPath)/\(encodedId)", options: opt)
         return true
     }

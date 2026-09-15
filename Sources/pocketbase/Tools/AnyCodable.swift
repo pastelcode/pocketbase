@@ -34,6 +34,7 @@ public struct AnyCodable: Codable, Equatable, Hashable, Sendable, CustomStringCo
         /// Dates encode as ISO-8601 (`YYYY-MM-DDTHH:MM:SS.sssZ`) in JSON and
         /// as `YYYY-MM-DD HH:MM:SS.sssZ` (space separator, UTC) in query
         /// strings.
+        case date(Date)
         /// An ordered list of values.
         case array([AnyCodable])
         /// A keyed collection of values.
@@ -101,6 +102,8 @@ public struct AnyCodable: Codable, Equatable, Hashable, Sendable, CustomStringCo
             self.value = .double(doubleVal)
         } else if let stringVal = value as? String {
             self.value = .string(stringVal)
+        } else if let dateVal = value as? Date {
+            self.value = .date(dateVal)
         } else if let arrayVal = value as? [Any] {
             self.value = .array(arrayVal.map { AnyCodable($0) })
         } else if let dictVal = value as? [String: Any] {
@@ -162,6 +165,8 @@ public struct AnyCodable: Codable, Equatable, Hashable, Sendable, CustomStringCo
             try container.encode(d)
         case .string(let s):
             try container.encode(s)
+        case .date(let d):
+            try container.encode(d.pocketBaseISO8601)
         case .array(let a):
             try container.encode(a)
         case .dictionary(let d):
@@ -177,6 +182,7 @@ public struct AnyCodable: Codable, Equatable, Hashable, Sendable, CustomStringCo
         case .int(let i): return String(i)
         case .double(let d): return String(d)
         case .string(let s): return s
+        case .date(let d): return d.pocketBaseISO8601
         case .array(let a): return "[\(a.map { $0.description }.joined(separator: ", "))]"
         case .dictionary(let d):
             let pairs = d.map { "\"\($0.key)\": \($0.value.description)" }.joined(separator: ", ")
@@ -194,6 +200,7 @@ public struct AnyCodable: Codable, Equatable, Hashable, Sendable, CustomStringCo
         case .int(let i): return i
         case .double(let d): return d
         case .string(let s): return s
+        case .date(let d): return d
         case .array(let a): return a.map { $0.rawValue }
         case .dictionary(let d): return d.mapValues { $0.rawValue }
         }
@@ -249,8 +256,17 @@ extension AnyCodable: ExpressibleByDictionaryLiteral {
         self.value = .dictionary(dict)
     }
 }
+
+extension Date {
     /// ISO-8601 timestamp matching JavaScript's `Date.toISOString()`
     /// (UTC, millisecond precision, `Z` suffix).
     ///
     /// Query string serialization replaces the `T` separator with a space,
     /// producing `YYYY-MM-DD HH:MM:SS.sssZ`.
+    var pocketBaseISO8601: String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter.string(from: self)
+    }
+}

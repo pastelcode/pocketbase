@@ -36,7 +36,7 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
 
     /// The API path of the collection, e.g. `/api/collections/posts`.
     open var baseCollectionPath: String {
-        let encoded = collectionIdOrName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? collectionIdOrName
+        let encoded = collectionIdOrName.encodeURIComponent()
         return "/api/collections/\(encoded)"
     }
 
@@ -175,10 +175,8 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
     /// - Throws: A ``ClientResponseError`` if the request fails.
     open func listAuthMethods(options: SendOptions? = nil) async throws -> AuthMethodsList {
         var opt = options ?? SendOptions()
-        opt.method = "GET"
-        if opt.query["fields"] == nil {
-            opt.query["fields"] = AnyCodable("mfa,otp,password,oauth2")
-        }
+        opt.applyDefaultMethod("GET")
+        opt.applyDefaultQuery(["fields": AnyCodable("mfa,otp,password,oauth2")])
         return try await client.send(path: "\(baseCollectionPath)/auth-methods", options: opt)
     }
 
@@ -201,11 +199,11 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
         options: SendOptions? = nil
     ) async throws -> RecordAuthResponse<T> {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        opt.body = .json([
+        opt.applyDefaultMethod("POST")
+        opt.applyDefaultBody(.json([
             "identity": AnyCodable(usernameOrEmail),
             "password": AnyCodable(password)
-        ])
+        ]))
 
         let autoRefreshThreshold = isSuperusers ? opt.autoRefreshThreshold : nil
         if isSuperusers && opt.autoRefresh != true {
@@ -262,7 +260,7 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
         options: SendOptions? = nil
     ) async throws -> RecordAuthResponse<T> {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
+        opt.applyDefaultMethod("POST")
         var bodyDict: [String: AnyCodable] = [
             "provider": AnyCodable(provider),
             "code": AnyCodable(code),
@@ -272,7 +270,7 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
         if let createData = createData {
             bodyDict["createData"] = AnyCodable(createData)
         }
-        opt.body = .json(bodyDict)
+        opt.applyDefaultBody(.json(bodyDict))
 
         let respData: RecordAuthResponse<RecordModel> = try await client.send(path: "\(baseCollectionPath)/auth-with-oauth2", options: opt)
         return try processAuthResponse(respData)
@@ -287,7 +285,7 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
     /// - Throws: A ``ClientResponseError`` if the request fails.
     open func authRefresh<T: Codable & Sendable>(options: SendOptions? = nil) async throws -> RecordAuthResponse<T> {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
+        opt.applyDefaultMethod("POST")
         let respData: RecordAuthResponse<RecordModel> = try await client.send(path: "\(baseCollectionPath)/auth-refresh", options: opt)
         return try processAuthResponse(respData)
     }
@@ -301,8 +299,8 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
     /// - Throws: A ``ClientResponseError`` if the request fails.
     open func requestPasswordReset(email: String, options: SendOptions? = nil) async throws -> Bool {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        opt.body = .json(["email": AnyCodable(email)])
+        opt.applyDefaultMethod("POST")
+        opt.applyDefaultBody(.json(["email": AnyCodable(email)]))
         let _: Data = try await client.sendRaw(path: "\(baseCollectionPath)/request-password-reset", options: opt)
         return true
     }
@@ -323,12 +321,12 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
         options: SendOptions? = nil
     ) async throws -> Bool {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        opt.body = .json([
+        opt.applyDefaultMethod("POST")
+        opt.applyDefaultBody(.json([
             "token": AnyCodable(passwordResetToken),
             "password": AnyCodable(password),
             "passwordConfirm": AnyCodable(passwordConfirm)
-        ])
+        ]))
         let _: Data = try await client.sendRaw(path: "\(baseCollectionPath)/confirm-password-reset", options: opt)
         return true
     }
@@ -342,8 +340,8 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
     /// - Throws: A ``ClientResponseError`` if the request fails.
     open func requestVerification(email: String, options: SendOptions? = nil) async throws -> Bool {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        opt.body = .json(["email": AnyCodable(email)])
+        opt.applyDefaultMethod("POST")
+        opt.applyDefaultBody(.json(["email": AnyCodable(email)]))
         let _: Data = try await client.sendRaw(path: "\(baseCollectionPath)/request-verification", options: opt)
         return true
     }
@@ -361,8 +359,8 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
     /// - Throws: A ``ClientResponseError`` if the request fails.
     open func confirmVerification(verificationToken: String, options: SendOptions? = nil) async throws -> Bool {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        opt.body = .json(["token": AnyCodable(verificationToken)])
+        opt.applyDefaultMethod("POST")
+        opt.applyDefaultBody(.json(["token": AnyCodable(verificationToken)]))
         let _: Data = try await client.sendRaw(path: "\(baseCollectionPath)/confirm-verification", options: opt)
 
         let payload = JWTUtils.getTokenPayload(verificationToken)
@@ -385,8 +383,8 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
     /// - Throws: A ``ClientResponseError`` if the request fails.
     open func requestEmailChange(newEmail: String, options: SendOptions? = nil) async throws -> Bool {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        opt.body = .json(["newEmail": AnyCodable(newEmail)])
+        opt.applyDefaultMethod("POST")
+        opt.applyDefaultBody(.json(["newEmail": AnyCodable(newEmail)]))
         let _: Data = try await client.sendRaw(path: "\(baseCollectionPath)/request-email-change", options: opt)
         return true
     }
@@ -404,11 +402,11 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
     /// - Throws: A ``ClientResponseError`` if the request fails.
     open func confirmEmailChange(emailChangeToken: String, password: String, options: SendOptions? = nil) async throws -> Bool {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        opt.body = .json([
+        opt.applyDefaultMethod("POST")
+        opt.applyDefaultBody(.json([
             "token": AnyCodable(emailChangeToken),
             "password": AnyCodable(password)
-        ])
+        ]))
         let _: Data = try await client.sendRaw(path: "\(baseCollectionPath)/confirm-email-change", options: opt)
 
         let payload = JWTUtils.getTokenPayload(emailChangeToken)
@@ -467,8 +465,8 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
     /// - Throws: A ``ClientResponseError`` if the request fails.
     open func requestOTP(email: String, options: SendOptions? = nil) async throws -> OTPResponse {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        opt.body = .json(["email": AnyCodable(email)])
+        opt.applyDefaultMethod("POST")
+        opt.applyDefaultBody(.json(["email": AnyCodable(email)]))
         return try await client.send(path: "\(baseCollectionPath)/request-otp", options: opt)
     }
 
@@ -484,11 +482,11 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
     /// - Throws: A ``ClientResponseError`` if authentication fails.
     open func authWithOTP<T: Codable & Sendable>(otpId: String, password: String, options: SendOptions? = nil) async throws -> RecordAuthResponse<T> {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        opt.body = .json([
+        opt.applyDefaultMethod("POST")
+        opt.applyDefaultBody(.json([
             "otpId": AnyCodable(otpId),
             "password": AnyCodable(password)
-        ])
+        ]))
         let respData: RecordAuthResponse<RecordModel> = try await client.send(path: "\(baseCollectionPath)/auth-with-otp", options: opt)
         return try processAuthResponse(respData)
     }
@@ -506,15 +504,15 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
     /// - Throws: A ``ClientResponseError`` if the request fails.
     open func impersonate(recordId: String, duration: Int, options: SendOptions? = nil) async throws -> PocketBase {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        opt.body = .json(["duration": AnyCodable(duration)])
+        opt.applyDefaultMethod("POST")
+        opt.applyDefaultBody(.json(["duration": AnyCodable(duration)]))
 
         if opt.headers["Authorization"] == nil {
             opt.headers["Authorization"] = client.authStore.token
         }
 
         let newClient = PocketBase(baseURL: client.baseURL, authStore: BaseAuthStore(), lang: client.lang)
-        let encodedId = recordId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? recordId
+        let encodedId = recordId.encodeURIComponent()
         let authData: RecordAuthResponse<RecordModel> = try await newClient.send(path: "\(baseCollectionPath)/impersonate/\(encodedId)", options: opt)
 
         newClient.authStore.save(token: authData.token, record: authData.record)

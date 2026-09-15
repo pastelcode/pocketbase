@@ -47,11 +47,11 @@ public struct FileParam: Equatable, Sendable, Codable {
 /// options.query["perPage"] = 50
 /// ```
 public struct SendOptions: Sendable {
-    public var method: String
     /// The HTTP method for the request.
     ///
     /// `nil` means "not set": the service or the client applies
     /// its default (`GET` when nothing else applies).
+    public var method: String?
     /// Additional HTTP headers merged into the request.
     public var headers: [String: String]
     /// The request body, if any.
@@ -61,23 +61,31 @@ public struct SendOptions: Sendable {
     /// Typed shorthands (`filter`, `sort`, `expand`, `fields`, `skipTotal`)
     /// take precedence over values stored here.
     public var query: [String: AnyCodable]
+
     /// Shorthand for the `filter` query parameter. Takes precedence over a
     /// value already present in `query`.
+    public var filter: String?
     /// Shorthand for the `sort` query parameter.
     ///
     /// Takes precedence over a value already present in `query`.
+    public var sort: String?
     /// Shorthand for the `expand` query parameter.
     ///
     /// Takes precedence over a value already present in `query`.
+    public var expand: String?
     /// Shorthand for the `fields` query parameter.
     ///
     /// Takes precedence over a value already present in `query`.
+    public var fields: String?
     /// Shorthand for the `skipTotal` query parameter.
     ///
     /// Takes precedence over a value already present in `query`.
+    public var skipTotal: Bool?
     /// Number of records fetched per page by `getFullList`.
     ///
     /// Consumed locally only and never sent to the server. Defaults to `1000`.
+    public var batch: Int?
+
     /// Explicit key used for auto-cancellation.
     ///
     /// When `nil`, the client derives a key from the request method and path.
@@ -144,10 +152,16 @@ public struct SendOptions: Sendable {
     /// - Parameter autoRefresh: Pass `true` to bypass the auto-refresh hook.
     /// - Parameter autoRefreshThreshold: Token expiry threshold in seconds for auto-refresh.
     public init(
-        method: String = "GET",
+        method: String? = nil,
         headers: [String: String] = [:],
         body: AnySendableBody? = nil,
         query: [String: AnyCodable] = [:],
+        filter: String? = nil,
+        sort: String? = nil,
+        expand: String? = nil,
+        fields: String? = nil,
+        skipTotal: Bool? = nil,
+        batch: Int? = nil,
         requestKey: String? = nil,
         autoCancel: Bool? = nil,
         fetch: CustomFetch? = nil,
@@ -158,6 +172,12 @@ public struct SendOptions: Sendable {
         self.headers = headers
         self.body = body
         self.query = query
+        self.filter = filter
+        self.sort = sort
+        self.expand = expand
+        self.fields = fields
+        self.skipTotal = skipTotal
+        self.batch = batch
         self.requestKey = requestKey
         self.autoCancel = autoCancel
         self.fetch = fetch
@@ -166,20 +186,57 @@ public struct SendOptions: Sendable {
     }
 }
 
+extension SendOptions {
     /// Applies a default method unless the caller already set one.
+    mutating func applyDefaultMethod(_ value: String) {
+        if method == nil {
+            method = value
+        }
+    }
+
     /// Applies default body params unless the caller already set a body.
+    mutating func applyDefaultBody(_ value: AnySendableBody?) {
+        if body == nil {
+            body = value
+        }
+    }
+
     /// Applies default query parameters without overwriting caller values.
+    mutating func applyDefaultQuery(_ defaults: [String: AnyCodable]) {
+        for (key, value) in defaults where query[key] == nil {
+            query[key] = value
+        }
+    }
+
     /// Moves the typed shorthands into `query`, taking precedence over values
     /// already present there (matching the reference SDK's unknown-option
     /// normalization).
+    mutating func applyShorthandQuery() {
+        if let filter = filter {
+            query["filter"] = AnyCodable(filter)
+        }
+        if let sort = sort {
+            query["sort"] = AnyCodable(sort)
+        }
+        if let expand = expand {
+            query["expand"] = AnyCodable(expand)
+        }
+        if let fields = fields {
+            query["fields"] = AnyCodable(fields)
+        }
+        if let skipTotal = skipTotal {
+            query["skipTotal"] = AnyCodable(skipTotal)
+        }
+    }
+}
+
 extension String {
     /// Percent-encodes the receiver exactly like JavaScript's `encodeURIComponent`:
     /// alphanumerics and `-_.!~*'()` are left as-is, everything else is
     /// percent-encoded (UTF-8 bytes for non-ASCII characters).
     public func encodeURIComponent() -> String {
-        var allowed = CharacterSet.urlQueryAllowed
-        allowed.remove(charactersIn: ":#[]@!$&'()*+,;=")
-        return self.addingPercentEncoding(withAllowedCharacters: allowed) ?? self
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()")
+        return addingPercentEncoding(withAllowedCharacters: allowed) ?? self
     }
 }
 
@@ -237,6 +294,10 @@ private func prepareQueryParamValue(_ val: AnyCodable) -> String? {
         return String(d)
     case .string(let s):
         return s.encodeURIComponent()
+    case .date(let d):
+        return d.pocketBaseISO8601
+            .replacingOccurrences(of: "T", with: " ")
+            .encodeURIComponent()
     case .array, .dictionary:
         let encoder = JSONEncoder()
         if let data = try? encoder.encode(val),

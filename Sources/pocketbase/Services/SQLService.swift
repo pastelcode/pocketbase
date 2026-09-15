@@ -12,8 +12,8 @@ open class SQLService: BaseService, @unchecked Sendable {
     /// - Throws: A ``ClientResponseError`` when the request fails.
     open func run(query: String, options: SendOptions? = nil) async throws -> SQLResult {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        opt.body = .json(["query": AnyCodable(query)])
+        opt.applyDefaultMethod("POST")
+        opt.applyDefaultBody(.json(["query": AnyCodable(query)]))
         return try await client.send(path: "/api/sql", options: opt)
     }
 }

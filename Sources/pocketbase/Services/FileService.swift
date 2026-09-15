@@ -32,9 +32,9 @@ open class FileService: BaseService, @unchecked Sendable {
             return ""
         }
 
-        let encodedCol = col.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? col
-        let encodedId = record.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? record.id
-        let encodedFilename = filename.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? filename
+        let encodedCol = col.encodeURIComponent()
+        let encodedId = record.id.encodeURIComponent()
+        let encodedFilename = filename.encodeURIComponent()
 
         let path = "api/files/\(encodedCol)/\(encodedId)/\(encodedFilename)"
         var result = client.buildURL(path: path)
@@ -62,7 +62,7 @@ open class FileService: BaseService, @unchecked Sendable {
     /// - Throws: A ``ClientResponseError`` when the request fails.
     open func getToken(options: SendOptions? = nil) async throws -> String {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
+        opt.applyDefaultMethod("POST")
         let resp: [String: AnyCodable] = try await client.send(path: "/api/files/token", options: opt)
         return resp["token"]?.value.string ?? ""
     }

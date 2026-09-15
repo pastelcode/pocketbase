@@ -88,8 +88,8 @@ open class BatchService: BaseService, @unchecked Sendable {
         let multipart = MultipartFormData(fields: formFields)
 
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        opt.body = .data(multipart.bodyData)
+        opt.applyDefaultMethod("POST")
+        opt.applyDefaultBody(.data(multipart.bodyData))
         opt.headers["Content-Type"] = multipart.contentTypeHeader
 
         return try await client.send(path: "/api/batch", options: opt)
@@ -128,7 +128,7 @@ open class SubBatchService: @unchecked Sendable {
     open func upsert(bodyParams: SendOptions.AnySendableBody? = nil, options: SendOptions? = nil) {
         let req = prepareRequest(
             method: "PUT",
-            url: "/api/collections/\(collectionIdOrName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? collectionIdOrName)/records",
+            url: "/api/collections/\(collectionIdOrName.encodeURIComponent())/records",
             bodyParams: bodyParams,
             options: options
         )
@@ -144,7 +144,7 @@ open class SubBatchService: @unchecked Sendable {
     open func create(bodyParams: SendOptions.AnySendableBody? = nil, options: SendOptions? = nil) {
         let req = prepareRequest(
             method: "POST",
-            url: "/api/collections/\(collectionIdOrName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? collectionIdOrName)/records",
+            url: "/api/collections/\(collectionIdOrName.encodeURIComponent())/records",
             bodyParams: bodyParams,
             options: options
         )
@@ -159,10 +159,10 @@ open class SubBatchService: @unchecked Sendable {
     /// - Parameter bodyParams: The record fields to submit. Ignored when `options.body` is set.
     /// - Parameter options: Additional send options, including query parameters or headers.
     open func update(id: String, bodyParams: SendOptions.AnySendableBody? = nil, options: SendOptions? = nil) {
-        let encodedId = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        let encodedId = id.encodeURIComponent()
         let req = prepareRequest(
             method: "PATCH",
-            url: "/api/collections/\(collectionIdOrName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? collectionIdOrName)/records/\(encodedId)",
+            url: "/api/collections/\(collectionIdOrName.encodeURIComponent())/records/\(encodedId)",
             bodyParams: bodyParams,
             options: options
         )
@@ -174,10 +174,10 @@ open class SubBatchService: @unchecked Sendable {
     /// - Parameter id: The record identifier.
     /// - Parameter options: Additional send options, including query parameters or headers.
     open func delete(id: String, options: SendOptions? = nil) {
-        let encodedId = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        let encodedId = id.encodeURIComponent()
         let req = prepareRequest(
             method: "DELETE",
-            url: "/api/collections/\(collectionIdOrName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? collectionIdOrName)/records/\(encodedId)",
+            url: "/api/collections/\(collectionIdOrName.encodeURIComponent())/records/\(encodedId)",
             bodyParams: nil,
             options: options
         )
@@ -190,9 +190,10 @@ open class SubBatchService: @unchecked Sendable {
         bodyParams: SendOptions.AnySendableBody?,
         options: SendOptions?
     ) -> BatchRequest {
-        let opt = options ?? SendOptions()
-        var finalUrl = url
+        var opt = options ?? SendOptions()
+        opt.applyShorthandQuery()
 
+        var finalUrl = url
         if !opt.query.isEmpty {
             let qStr = serializeQueryParams(opt.query)
             if !qStr.isEmpty {
@@ -203,7 +204,7 @@ open class SubBatchService: @unchecked Sendable {
         var jsonBody: [String: AnyCodable] = [:]
         var filesBody: [String: [FileParam]] = [:]
 
-        let bodyToExtract = bodyParams ?? opt.body
+        let bodyToExtract = opt.body ?? bodyParams
         if let body = bodyToExtract {
             switch body {
             case .json(let dict):

@@ -288,6 +288,8 @@ open class PocketBase: @unchecked Sendable {
         case .string(let s):
             let escaped = s.replacingOccurrences(of: "'", with: "\\'")
             return "'\(escaped)'"
+        case .date(let d):
+            return "'\(d.pocketBaseISO8601.replacingOccurrences(of: "T", with: " "))'"
         case .array, .dictionary:
             let encoder = JSONEncoder()
             if let data = try? encoder.encode(anyCodable),
@@ -392,7 +394,7 @@ open class PocketBase: @unchecked Sendable {
         }
 
         var request = URLRequest(url: url)
-        request.httpMethod = initOptions.method
+        request.httpMethod = initOptions.method ?? "GET"
 
         for (k, v) in initOptions.headers {
             request.setValue(v, forHTTPHeaderField: k)
@@ -420,7 +422,8 @@ open class PocketBase: @unchecked Sendable {
 
         // Run the request in a cancellable task so both key-based cancellation
         // and the caller's task cancellation abort the in-flight operation.
-        let requestTask = Task { () -> (Data, URLResponse) in
+        // Capture by value: `initOptions` is still used below.
+        let requestTask = Task { [request, initOptions] () -> (Data, URLResponse) in
             if let customFetch = initOptions.fetch {
                 return try await customFetch(request)
             }
@@ -477,6 +480,14 @@ open class PocketBase: @unchecked Sendable {
     private func initSendOptions(path: String, options: SendOptions) -> SendOptions {
         var opt = options
 
+        if opt.method == nil {
+            opt.method = "GET"
+        }
+
+        // Typed shorthands take precedence over an explicit `query` value,
+        // matching the reference SDK's unknown-option normalization.
+        opt.applyShorthandQuery()
+
         if getHeader(opt.headers, name: "Content-Type") == nil && opt.body != nil {
             if case .form = opt.body {
                 // Skip setting json Content-Type for form body
@@ -514,7 +525,7 @@ open class PocketBase: @unchecked Sendable {
             return key
         }
 
-        let method = options.method.isEmpty ? "GET" : options.method
+        let method = options.method.flatMap { $0.isEmpty ? nil : $0 } ?? "GET"
         return method + path
     }
 

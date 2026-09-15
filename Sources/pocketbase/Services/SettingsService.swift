@@ -11,7 +11,7 @@ open class SettingsService: BaseService, @unchecked Sendable {
     /// - Throws: A ``ClientResponseError`` when the request fails.
     open func getAll(options: SendOptions? = nil) async throws -> [String: AnyCodable] {
         var opt = options ?? SendOptions()
-        opt.method = "GET"
+        opt.applyDefaultMethod("GET")
         return try await client.send(path: "/api/settings", options: opt)
     }
 
@@ -23,10 +23,8 @@ open class SettingsService: BaseService, @unchecked Sendable {
     /// - Throws: A ``ClientResponseError`` when the request fails.
     open func update(bodyParams: SendOptions.AnySendableBody? = nil, options: SendOptions? = nil) async throws -> [String: AnyCodable] {
         var opt = options ?? SendOptions()
-        opt.method = "PATCH"
-        if let body = bodyParams {
-            opt.body = body
-        }
+        opt.applyDefaultMethod("PATCH")
+        opt.applyDefaultBody(bodyParams)
         return try await client.send(path: "/api/settings", options: opt)
     }
 
@@ -38,8 +36,8 @@ open class SettingsService: BaseService, @unchecked Sendable {
     /// - Throws: A ``ClientResponseError`` when the test fails.
     open func testS3(filesystem: String = "storage", options: SendOptions? = nil) async throws -> Bool {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        opt.body = .json(["filesystem": AnyCodable(filesystem)])
+        opt.applyDefaultMethod("POST")
+        opt.applyDefaultBody(.json(["filesystem": AnyCodable(filesystem)]))
         let _: Data = try await client.sendRaw(path: "/api/settings/test/s3", options: opt)
         return true
     }
@@ -54,12 +52,12 @@ open class SettingsService: BaseService, @unchecked Sendable {
     /// - Throws: A ``ClientResponseError`` when the test fails.
     open func testEmail(collectionIdOrName: String, toEmail: String, emailTemplate: String, options: SendOptions? = nil) async throws -> Bool {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        opt.body = .json([
+        opt.applyDefaultMethod("POST")
+        opt.applyDefaultBody(.json([
             "email": AnyCodable(toEmail),
             "template": AnyCodable(emailTemplate),
             "collection": AnyCodable(collectionIdOrName)
-        ])
+        ]))
         let _: Data = try await client.sendRaw(path: "/api/settings/test/email", options: opt)
         return true
     }
@@ -83,14 +81,14 @@ open class SettingsService: BaseService, @unchecked Sendable {
         options: SendOptions? = nil
     ) async throws -> [String: String] {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        opt.body = .json([
+        opt.applyDefaultMethod("POST")
+        opt.applyDefaultBody(.json([
             "clientId": AnyCodable(clientId),
             "teamId": AnyCodable(teamId),
             "keyId": AnyCodable(keyId),
             "privateKey": AnyCodable(privateKey),
             "duration": AnyCodable(duration)
-        ])
+        ]))
         return try await client.send(path: "/api/settings/apple/generate-client-secret", options: opt)
     }
 }

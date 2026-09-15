@@ -118,9 +118,8 @@ open class RealtimeService: BaseService, @unchecked Sendable {
                 "headers": AnyCodable(opt.headers)
             ]
             if let data = try? JSONEncoder().encode(jsonDict),
-               let jsonStr = String(data: data, encoding: .utf8),
-               let encodedOptions = jsonStr.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
-                key += (key.contains("?") ? "&" : "?") + "options=" + encodedOptions
+               let jsonStr = String(data: data, encoding: .utf8) {
+                key += (key.contains("?") ? "&" : "?") + "options=" + jsonStr.encodeURIComponent()
             }
         }
 

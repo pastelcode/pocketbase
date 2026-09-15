@@ -13,9 +13,11 @@ open class LogService: BaseService, @unchecked Sendable {
     /// - Throws: A ``ClientResponseError`` when the request fails.
     open func getList(page: Int = 1, perPage: Int = 30, options: SendOptions? = nil) async throws -> ListResult<LogModel> {
         var opt = options ?? SendOptions()
-        opt.method = "GET"
-        opt.query["page"] = AnyCodable(page)
-        opt.query["perPage"] = AnyCodable(perPage)
+        opt.applyDefaultMethod("GET")
+        opt.applyDefaultQuery([
+            "page": AnyCodable(page),
+            "perPage": AnyCodable(perPage)
+        ])
         return try await client.send(path: "/api/logs", options: opt)
     }
 
@@ -39,8 +41,8 @@ open class LogService: BaseService, @unchecked Sendable {
         }
 
         var opt = options ?? SendOptions()
-        opt.method = "GET"
-        let encodedId = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        opt.applyDefaultMethod("GET")
+        let encodedId = id.encodeURIComponent()
         return try await client.send(path: "/api/logs/\(encodedId)", options: opt)
     }
 
@@ -51,7 +53,7 @@ open class LogService: BaseService, @unchecked Sendable {
     /// - Throws: A ``ClientResponseError`` when the request fails.
     open func getStats(options: SendOptions? = nil) async throws -> [HourlyStats] {
         var opt = options ?? SendOptions()
-        opt.method = "GET"
+        opt.applyDefaultMethod("GET")
         return try await client.send(path: "/api/logs/stats", options: opt)
     }
 }

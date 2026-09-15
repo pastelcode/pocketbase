@@ -12,7 +12,7 @@ open class BackupService: BaseService, @unchecked Sendable {
     /// - Throws: A ``ClientResponseError`` when the request fails.
     open func getFullList(options: SendOptions? = nil) async throws -> [BackupFileInfo] {
         var opt = options ?? SendOptions()
-        opt.method = "GET"
+        opt.applyDefaultMethod("GET")
         return try await client.send(path: "/api/backups", options: opt)
     }
 
@@ -24,8 +24,8 @@ open class BackupService: BaseService, @unchecked Sendable {
     /// - Throws: A ``ClientResponseError`` when the request fails.
     open func create(basename: String, options: SendOptions? = nil) async throws -> Bool {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        opt.body = .json(["name": AnyCodable(basename)])
+        opt.applyDefaultMethod("POST")
+        opt.applyDefaultBody(.json(["name": AnyCodable(basename)]))
         let _: Data = try await client.sendRaw(path: "/api/backups", options: opt)
         return true
     }
@@ -38,8 +38,8 @@ open class BackupService: BaseService, @unchecked Sendable {
     /// - Throws: A ``ClientResponseError`` when the request fails.
     open func upload(bodyParams: SendOptions.AnySendableBody, options: SendOptions? = nil) async throws -> Bool {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        opt.body = bodyParams
+        opt.applyDefaultMethod("POST")
+        opt.applyDefaultBody(bodyParams)
         let _: Data = try await client.sendRaw(path: "/api/backups/upload", options: opt)
         return true
     }
@@ -52,8 +52,8 @@ open class BackupService: BaseService, @unchecked Sendable {
     /// - Throws: A ``ClientResponseError`` when the request fails.
     open func delete(key: String, options: SendOptions? = nil) async throws -> Bool {
         var opt = options ?? SendOptions()
-        opt.method = "DELETE"
-        let encodedKey = key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? key
+        opt.applyDefaultMethod("DELETE")
+        let encodedKey = key.encodeURIComponent()
         let _: Data = try await client.sendRaw(path: "/api/backups/\(encodedKey)", options: opt)
         return true
     }
@@ -66,8 +66,8 @@ open class BackupService: BaseService, @unchecked Sendable {
     /// - Throws: A ``ClientResponseError`` when the request fails.
     open func restore(key: String, options: SendOptions? = nil) async throws -> Bool {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        let encodedKey = key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? key
+        opt.applyDefaultMethod("POST")
+        let encodedKey = key.encodeURIComponent()
         let _: Data = try await client.sendRaw(path: "/api/backups/\(encodedKey)/restore", options: opt)
         return true
     }
@@ -93,8 +93,8 @@ open class BackupService: BaseService, @unchecked Sendable {
     /// - Parameter key: The backup file key or name.
     /// - Returns: The backup download URL.
     open func getDownloadURL(token: String, key: String) -> String {
-        let encodedKey = key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? key
-        let encodedToken = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? token
+        let encodedKey = key.encodeURIComponent()
+        let encodedToken = token.encodeURIComponent()
         return client.buildURL(path: "/api/backups/\(encodedKey)?token=\(encodedToken)")
     }
 }

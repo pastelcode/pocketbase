@@ -63,11 +63,11 @@ struct RequestCancellationTests {
         var options = SendOptions()
         options.fetch = slowFetch(box: box)
 
-        let first = Task { try await client.sendRaw(path: "/api/things", options: options) }
+        let first = Task { [options] in try await client.sendRaw(path: "/api/things", options: options) }
         await waitUntil { box.started == 1 }
 
         // Same method + path derives the same cancellation key.
-        let second = Task { try await client.sendRaw(path: "/api/things", options: options) }
+        let second = Task { [options] in try await client.sendRaw(path: "/api/things", options: options) }
         await waitUntil { box.started == 2 }
 
         _ = try await second.value
@@ -138,9 +138,9 @@ struct RequestCancellationTests {
         var options = SendOptions()
         options.fetch = slowFetch(box: box, nanoseconds: 200_000_000)
 
-        let first = Task { try await client.sendRaw(path: "/api/things", options: options) }
+        let first = Task { [options] in try await client.sendRaw(path: "/api/things", options: options) }
         await waitUntil { box.started == 1 }
-        let second = Task { try await client.sendRaw(path: "/api/things", options: options) }
+        let second = Task { [options] in try await client.sendRaw(path: "/api/things", options: options) }
         await waitUntil { box.started == 2 }
 
         _ = try await first.value
@@ -155,9 +155,9 @@ struct RequestCancellationTests {
         options.fetch = slowFetch(box: box, nanoseconds: 200_000_000)
         options.autoCancel = false
 
-        let first = Task { try await client.sendRaw(path: "/api/things", options: options) }
+        let first = Task { [options] in try await client.sendRaw(path: "/api/things", options: options) }
         await waitUntil { box.started == 1 }
-        let second = Task { try await client.sendRaw(path: "/api/things", options: options) }
+        let second = Task { [options] in try await client.sendRaw(path: "/api/things", options: options) }
         await waitUntil { box.started == 2 }
 
         _ = try await first.value

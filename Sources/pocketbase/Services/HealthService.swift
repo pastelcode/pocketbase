@@ -11,7 +11,7 @@ open class HealthService: BaseService, @unchecked Sendable {
     /// - Throws: A ``ClientResponseError`` when the request fails.
     open func check(options: SendOptions? = nil) async throws -> HealthCheckResponse {
         var opt = options ?? SendOptions()
-        opt.method = "GET"
+        opt.applyDefaultMethod("GET")
         return try await client.send(path: "/api/health", options: opt)
     }
 }

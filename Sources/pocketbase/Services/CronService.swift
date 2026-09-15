@@ -11,7 +11,7 @@ open class CronService: BaseService, @unchecked Sendable {
     /// - Throws: A ``ClientResponseError`` when the request fails.
     open func getFullList(options: SendOptions? = nil) async throws -> [CronJob] {
         var opt = options ?? SendOptions()
-        opt.method = "GET"
+        opt.applyDefaultMethod("GET")
         return try await client.send(path: "/api/crons", options: opt)
     }
 
@@ -23,8 +23,8 @@ open class CronService: BaseService, @unchecked Sendable {
     /// - Throws: A ``ClientResponseError`` when the request fails.
     open func run(jobId: String, options: SendOptions? = nil) async throws -> Bool {
         var opt = options ?? SendOptions()
-        opt.method = "POST"
-        let encoded = jobId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? jobId
+        opt.applyDefaultMethod("POST")
+        let encoded = jobId.encodeURIComponent()
         let _: Data = try await client.sendRaw(path: "/api/crons/\(encoded)", options: opt)
         return true
     }
