@@ -68,6 +68,38 @@ public struct JWTUtils: Sendable {
         return !(exp - expirationThreshold > Date().timeIntervalSince1970)
     }
 
+    /// Returns the token's `exp` claim as a Unix timestamp.
+    ///
+    /// Mirrors the official Dart SDK's stricter parsing: the token must be a
+    /// well-formed three-segment JWT and the claim must be a number (or a
+    /// numeric string). A missing or non-numeric `exp` returns `nil` instead of
+    /// being treated as "never expires".
+    ///
+    /// - Parameter token: The JWT token to inspect.
+    /// - Returns: The expiration timestamp in seconds, or `nil` when it is not
+    ///   available.
+    public static func getExpirationTimestamp(_ token: String) -> Double? {
+        guard token.components(separatedBy: ".").count == 3 else {
+            return nil
+        }
+
+        let payload = getTokenPayload(token)
+        guard let expValue = payload["exp"] else {
+            return nil
+        }
+
+        switch expValue.value {
+        case .int(let i):
+            return Double(i)
+        case .double(let d):
+            return d
+        case .string(let s):
+            return Double(s)
+        default:
+            return nil
+        }
+    }
+
     /// Returns whether the value is falsy in JavaScript (`0`, `null`, `false`
     /// or an empty string).
     private static func isFalsy(_ value: AnyCodable) -> Bool {

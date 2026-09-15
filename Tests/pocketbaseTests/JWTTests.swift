@@ -56,12 +56,44 @@ struct JWTTests {
         #expect(JWTUtils.isTokenExpired(dummyJWT(payload: ["exp": soon]), expirationThreshold: 120) == true)
     }
 
-    @Test func testAuthStoreIsValidMatchesExpirySemantics() {
+    @Test func testGetExpirationTimestamp() {
+        #expect(JWTUtils.getExpirationTimestamp(dummyJWT(payload: ["exp": 1908784800])) == 1908784800)
+        #expect(JWTUtils.getExpirationTimestamp(dummyJWT(payload: ["exp": "1908784800"])) == 1908784800)
+        #expect(JWTUtils.getExpirationTimestamp(dummyJWT(payload: ["exp": 0])) == 0)
+
+        // Missing, non-numeric or malformed tokens return nil.
+        #expect(JWTUtils.getExpirationTimestamp(dummyJWT(payload: ["test": 1])) == nil)
+        #expect(JWTUtils.getExpirationTimestamp(dummyJWT(payload: ["exp": "abc"])) == nil)
+        #expect(JWTUtils.getExpirationTimestamp("") == nil)
+        #expect(JWTUtils.getExpirationTimestamp("a.b") == nil)
+        #expect(JWTUtils.getExpirationTimestamp("a.b.c") == nil)
+    }
+
+    @Test func testAuthStoreIsValidUsesStrictChecks() {
         let store = BaseAuthStore()
-        store.save(token: dummyJWT(payload: ["exp": 0]), record: nil)
+
+        // Numeric and numeric-string exp values are valid while in the future.
+        store.save(token: dummyJWT(payload: ["exp": 9999999999]), record: nil)
+        #expect(store.isValid == true)
+        store.save(token: dummyJWT(payload: ["exp": "9999999999"]), record: nil)
         #expect(store.isValid == true)
 
+        // Missing exp is invalid (stricter than the JavaScript SDK).
+        store.save(token: dummyJWT(payload: ["test": 1]), record: nil)
+        #expect(store.isValid == false)
+
+        // Expired, falsy or non-numeric exp values are invalid.
+        store.save(token: dummyJWT(payload: ["exp": 1]), record: nil)
+        #expect(store.isValid == false)
+        store.save(token: dummyJWT(payload: ["exp": 0]), record: nil)
+        #expect(store.isValid == false)
         store.save(token: dummyJWT(payload: ["exp": "abc"]), record: nil)
+        #expect(store.isValid == false)
+
+        // Malformed tokens are invalid.
+        store.save(token: "", record: nil)
+        #expect(store.isValid == false)
+        store.save(token: "a.b", record: nil)
         #expect(store.isValid == false)
     }
 }
