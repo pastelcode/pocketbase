@@ -1,10 +1,25 @@
 import Foundation
 
+/// An auth store that persists its state in `UserDefaults`.
+///
+/// The token and record are JSON-encoded under ``storageKey`` and reloaded on
+/// initialization. If serialization fails, the value is kept in memory for the
+/// lifetime of the process.
+///
+/// ```swift
+/// let store = LocalAuthStore(storageKey: "pocketbase_auth")
+/// let pb = PocketBase(baseURL: "https://example.com", authStore: store)
+/// ```
 open class LocalAuthStore: BaseAuthStore, @unchecked Sendable {
+    /// The `UserDefaults` key used to persist the auth state.
     public let storageKey: String
     private var memoryFallback: [String: Any] = [:]
     private let storeLock = NSRecursiveLock()
 
+    /// Creates a store and loads any state previously persisted under `storageKey`.
+    ///
+    /// - Parameter storageKey: The `UserDefaults` key used for persistence.
+    ///   Defaults to `"pocketbase_auth"`.
     public init(storageKey: String = "pocketbase_auth") {
         self.storageKey = storageKey
         super.init()
@@ -23,6 +38,11 @@ open class LocalAuthStore: BaseAuthStore, @unchecked Sendable {
         }
     }
 
+    /// Persists the token and record, then notifies registered observers.
+    ///
+    /// - Parameters:
+    ///   - token: The new authentication token.
+    ///   - record: The new authentication record. Defaults to `nil`.
     open override func save(token: String, record: RecordModel? = nil) {
         var dict: [String: Any] = ["token": token]
         if let record = record {
@@ -35,11 +55,13 @@ open class LocalAuthStore: BaseAuthStore, @unchecked Sendable {
         super.save(token: token, record: record)
     }
 
+    /// Removes the persisted state and clears the in-memory values.
     open override func clear() {
         storageRemove(storageKey)
         super.clear()
     }
 
+    /// Loads the persisted dictionary for `key`, falling back to memory.
     private func storageGet(_ key: String) -> [String: Any]? {
         storeLock.lock()
         defer { storeLock.unlock() }
@@ -51,6 +73,7 @@ open class LocalAuthStore: BaseAuthStore, @unchecked Sendable {
         return memoryFallback[key] as? [String: Any]
     }
 
+    /// Persists `value` for `key`, falling back to memory if encoding fails.
     private func storageSet(_ key: String, value: [String: Any]) {
         storeLock.lock()
         defer { storeLock.unlock() }
@@ -62,6 +85,7 @@ open class LocalAuthStore: BaseAuthStore, @unchecked Sendable {
         }
     }
 
+    /// Removes the value for `key` from both `UserDefaults` and memory.
     private func storageRemove(_ key: String) {
         storeLock.lock()
         defer { storeLock.unlock() }

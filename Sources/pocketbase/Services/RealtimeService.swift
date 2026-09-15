@@ -1,10 +1,33 @@
 import Foundation
 
+/// A closure that removes a single realtime subscription when invoked.
 public typealias UnsubscribeFunc = @Sendable () async throws -> Void
+/// A closure invoked with the decoded JSON payload of a realtime event.
 public typealias RealtimeCallback = @Sendable ([String: Any]) -> Void
 
+/// Realtime events service built on Server-Sent Events.
+///
+/// The service connects to `/api/realtime`, waits for the server's
+/// `PB_CONNECT` handshake to obtain a client id, then syncs the active topic
+/// subscriptions over `POST /api/realtime`. If the stream drops, it
+/// reconnects using a predefined backoff (200ms up to 2s, with jitter),
+/// treating a server-provided SSE `retry:` value as the minimum delay. Active
+/// subscriptions are resubmitted automatically after every reconnect.
+///
+/// ```swift
+/// let unsubscribe = try await client.realtime.subscribe(topic: "posts/*") { event in
+///     print(event)
+/// }
+/// try await unsubscribe()
+/// ```
 open class RealtimeService: BaseService, @unchecked Sendable {
+    /// The client id assigned by the server during the `PB_CONNECT` handshake.
+    ///
+    /// Empty while disconnected or before the handshake completes.
     public private(set) var clientId: String = ""
+    /// Called when an established connection drops.
+    ///
+    /// The argument contains the topics that were active at the time.
     public var onDisconnect: (@Sendable ([String]) -> Void)?
 
     /// Factory for the SSE transport. Internal so tests can inject a fake.
@@ -37,6 +60,13 @@ open class RealtimeService: BaseService, @unchecked Sendable {
 
     /// Computes the reconnect delay. A server-provided SSE `retry:` value acts
     /// as a floor: we never reconnect sooner than the server asked for.
+    ///
+    /// Attempts beyond the predefined list are capped at the last interval.
+    ///
+    /// - Parameter attempt: The zero-based reconnect attempt number.
+    /// - Parameter serverRetryMilliseconds: The server-suggested delay in
+    ///   milliseconds, if any.
+    /// - Returns: The reconnect delay in milliseconds.
     static func reconnectDelay(forAttempt attempt: Int, serverRetryMilliseconds: Int?) -> Double {
         let index = min(max(attempt, 0), predefinedReconnectIntervals.count - 1)
         let base = predefinedReconnectIntervals[index]
@@ -45,12 +75,33 @@ open class RealtimeService: BaseService, @unchecked Sendable {
     }
 
 
+    /// Whether the transport is connected and the `PB_CONNECT` handshake completed.
     open var isConnected: Bool {
         return withLock {
             !clientId.isEmpty && isTransportActive && pendingConnects.isEmpty
         }
     }
 
+    /// Subscribes to a realtime topic.
+    ///
+    /// The topic can be an exact topic (for example `posts/abc123`), a
+    /// wildcard topic (for example `posts/*`), or the special `PB_CONNECT`
+    /// topic. When `options` are supplied, their query and headers are
+    /// serialized into the topic key so subscriptions with different options
+    /// remain independent.
+    ///
+    /// ```swift
+    /// let unsubscribe = try await client.realtime.subscribe(topic: "posts/*") { event in
+    ///     print(event["action"] ?? "")
+    /// }
+    /// ```
+    ///
+    /// - Parameter topic: The topic to listen to.
+    /// - Parameter options: Extra query parameters and headers for the subscription.
+    /// - Parameter callback: Invoked with the JSON payload of every matching event.
+    /// - Returns: A closure that removes this subscription when invoked.
+    /// - Throws: ``ClientResponseError`` when the topic is empty or the
+    ///   connection and subscription sync fail.
     open func subscribe(
         topic: String,
         options: SendOptions? = nil,
@@ -101,6 +152,13 @@ open class RealtimeService: BaseService, @unchecked Sendable {
         }
     }
 
+    /// Removes subscriptions matching a topic.
+    ///
+    /// Passing `nil` removes all subscriptions; otherwise every topic whose
+    /// key equals `topic` or starts with `topic` plus a `?` is removed. When
+    /// no subscriptions remain, the connection is closed.
+    ///
+    /// - Parameter topic: The topic to unsubscribe from, or `nil` for all topics.
     open func unsubscribe(_ topic: String? = nil) async throws {
         withLock {
             if let topic = topic {
@@ -121,6 +179,11 @@ open class RealtimeService: BaseService, @unchecked Sendable {
         try await submitSubscriptions()
     }
 
+    /// Removes all subscriptions whose topic starts with the given prefix.
+    ///
+    /// When no subscriptions remain, the connection is closed.
+    ///
+    /// - Parameter keyPrefix: The topic prefix to match.
     open func unsubscribeByPrefix(_ keyPrefix: String) async throws {
         withLock {
             let matchingKeys = subscriptions.keys.filter { ($0 + "?").hasPrefix(keyPrefix) }
@@ -137,6 +200,11 @@ open class RealtimeService: BaseService, @unchecked Sendable {
         try await submitSubscriptions()
     }
 
+    /// Closes the realtime connection.
+    ///
+    /// Pending connects are resumed without throwing. When a connection was
+    /// previously established, `onDisconnect` is invoked with the active
+    /// topics. Registered subscriptions are kept.
     open func disconnect() {
         let (continuations, active, shouldNotify) = withLock {
             () -> ([CheckedContinuation<Void, Error>], [String], Bool) in
@@ -173,6 +241,10 @@ open class RealtimeService: BaseService, @unchecked Sendable {
 
     /// Handles a raw SSE frame. Kept public for backwards compatibility and
     /// manual injection; the transport calls the same path internally.
+    ///
+    /// - Parameter event: The SSE event type.
+    /// - Parameter id: The SSE event id.
+    /// - Parameter data: The raw SSE data payload.
     public func handleMessage(event: String, id: String, data: String) {
         handle(event: SSEEvent(event: event, id: id, data: data))
     }

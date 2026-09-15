@@ -1,5 +1,9 @@
 import Foundation
 
+/// Helpers for decoding and inspecting JSON Web Token payloads.
+///
+/// The utilities read the token's payload segment without verifying its
+/// signature. Use them only for client-side expiration and claim inspection.
 public struct JWTUtils: Sendable {
     /// Returns JWT token's payload data without validating signature.
     public static func getTokenPayload(_ token: String) -> [String: AnyCodable] {

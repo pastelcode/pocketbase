@@ -3,22 +3,64 @@ import Foundation
 import FoundationNetworking
 #endif
 
+/// The entry point for interacting with a PocketBase server.
+///
+/// A client owns the auth store and the service singletons (`collections`,
+/// `files`, `logs`, and so on). All service calls funnel through
+/// ``sendRaw(path:options:)``, which applies the ``beforeSend`` and
+/// ``afterSend`` hooks, serializes the request, and maps error responses to
+/// ``ClientResponseError``.
+///
+/// Requests participate in auto-cancellation by default: starting a request
+/// cancels a pending one with the same `SendOptions.requestKey`, or the same
+/// method and path. Use ``autoCancellation(_:)`` to disable this globally or
+/// set `SendOptions.autoCancel` to `false` per request.
+///
+/// ```swift
+/// let pb = PocketBase(baseURL: "https://example.com")
+/// let posts: [RecordModel] = try await pb.collection("posts").getFullList()
+/// ```
 open class PocketBase: @unchecked Sendable {
+    /// The base URL of the PocketBase server, e.g. `https://example.com`.
     open var baseURL: String
+    /// The default `Accept-Language` header value applied to requests.
     open var lang: String
+    /// The auth store used to persist authentication for this client.
+    ///
+    /// Defaults to a ``LocalAuthStore`` when none is provided at initialization.
     open var authStore: BaseAuthStore
 
+    /// Service for managing collection schemas.
     public private(set) var collections: CollectionService!
+    /// Service for managing files and building file URLs.
     public private(set) var files: FileService!
+    /// Service for querying application logs.
     public private(set) var logs: LogService!
+    /// Service for reading and updating application settings.
     public private(set) var settings: SettingsService!
+    /// Service for realtime subscriptions.
     public private(set) var realtime: RealtimeService!
+    /// Service for server health checks.
     public private(set) var health: HealthService!
+    /// Service for managing backups.
     public private(set) var backups: BackupService!
+    /// Service for managing cron jobs.
     public private(set) var crons: CronService!
+    /// Service for executing raw SQL statements.
     public private(set) var sql: SQLService!
 
+    /// An optional hook invoked before each request is sent.
+    ///
+    /// Receives the resolved URL and ``SendOptions`` and returns a possibly
+    /// modified pair. Useful for injecting headers or refreshing an expired
+    /// token before the request goes out.
     open var beforeSend: (@Sendable (String, SendOptions) async throws -> (url: String, options: SendOptions))?
+    /// An optional hook invoked after a response is received.
+    ///
+    /// Receives the raw `HTTPURLResponse` and body data together with the
+    /// ``SendOptions`` used for the request, and returns the data that
+    /// continues through the pipeline. Called before error statuses are
+    /// converted into ``ClientResponseError``.
     open var afterSend: (@Sendable (HTTPURLResponse, Data, SendOptions) async throws -> Data)?
 
     private let lock = NSRecursiveLock()
@@ -27,6 +69,14 @@ open class PocketBase: @unchecked Sendable {
     private var cancelHandles: [String: CancellationHandle] = [:]
     private var resetAutoRefreshHandler: (@Sendable () -> Void)?
 
+    /// Creates a client for the given PocketBase server.
+    ///
+    /// - Parameters:
+    ///   - baseURL: The base URL of the server. Defaults to `"/"`.
+    ///   - authStore: The store used to persist authentication. Pass `nil` to
+    ///     use a default ``LocalAuthStore``.
+    ///   - lang: The default `Accept-Language` header value. Defaults to
+    ///     `"en-US"`.
     public init(baseURL: String = "/", authStore: BaseAuthStore? = nil, lang: String = "en-US") {
         self.baseURL = baseURL
         self.lang = lang
@@ -44,10 +94,18 @@ open class PocketBase: @unchecked Sendable {
         self.sql = SQLService(self)
     }
 
+    /// Convenience accessor for the built-in `_superusers` collection.
     open var admins: RecordService<RecordModel> {
         return collection("_superusers")
     }
 
+    /// Returns the record service for the collection with the given id or name.
+    ///
+    /// Services are cached per collection, so repeated calls with the same
+    /// argument return the same instance.
+    ///
+    /// - Parameter idOrName: The collection id or name.
+    /// - Returns: A record service bound to the collection.
     open func collection(_ idOrName: String) -> RecordService<RecordModel> {
         lock.lock()
         defer { lock.unlock() }
@@ -61,6 +119,14 @@ open class PocketBase: @unchecked Sendable {
         return service
     }
 
+    /// Returns the record service for the collection with the given id or name,
+    /// decoding records as `M`.
+    ///
+    /// Services are cached per collection, so repeated calls with the same
+    /// argument return the same instance.
+    ///
+    /// - Parameter idOrName: The collection id or name.
+    /// - Returns: A typed record service bound to the collection.
     open func collection<M: Codable & Sendable>(_ idOrName: String) -> RecordService<M> {
         lock.lock()
         defer { lock.unlock() }
@@ -74,10 +140,21 @@ open class PocketBase: @unchecked Sendable {
         return service
     }
 
+    /// Creates a batch service for sending multiple requests in one call.
+    ///
+    /// - Returns: A fresh ``BatchService``.
     open func createBatch() -> BatchService {
         return BatchService(self)
     }
 
+    /// Enables or disables auto-cancellation globally.
+    ///
+    /// When enabled (the default), starting a request cancels a pending request
+    /// registered under the same key.
+    ///
+    /// - Parameter enable: `true` to enable auto-cancellation, `false` to
+    ///   disable it.
+    /// - Returns: This client, for chaining.
     @discardableResult
     open func autoCancellation(_ enable: Bool) -> PocketBase {
         lock.lock()
@@ -90,6 +167,9 @@ open class PocketBase: @unchecked Sendable {
     ///
     /// Requests are registered under `SendOptions.requestKey`, or, when it is
     /// not set, under `method + path`, matching the reference JS SDK.
+    ///
+    /// - Parameter requestKey: The key the request was registered under.
+    /// - Returns: This client, for chaining.
     @discardableResult
     open func cancelRequest(_ requestKey: String) -> PocketBase {
         lock.lock()
@@ -101,6 +181,8 @@ open class PocketBase: @unchecked Sendable {
     }
 
     /// Cancels all pending cancellable requests.
+    ///
+    /// - Returns: This client, for chaining.
     @discardableResult
     open func cancelAllRequests() -> PocketBase {
         lock.lock()
@@ -137,6 +219,22 @@ open class PocketBase: @unchecked Sendable {
         handler?()
     }
 
+    /// Replaces `{:name}` placeholders in a filter expression with formatted
+    /// values.
+    ///
+    /// Values are converted by type: strings are quoted and escaped, booleans
+    /// and numbers are inserted as-is, dates use the PocketBase ISO 8601
+    /// format, `nil` becomes `null`, and arrays/dictionaries are JSON-encoded.
+    /// Placeholders without a matching entry in `params` are left untouched.
+    ///
+    /// ```swift
+    /// let filter = pb.filter("author = {:author}", params: ["author": "john"])
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - raw: The filter expression containing `{:name}` placeholders.
+    ///   - params: The placeholder values keyed by placeholder name.
+    /// - Returns: The filter expression with the provided placeholders replaced.
     open func filter(_ raw: String, params: [String: Any]? = nil) -> String {
         guard let params = params, !params.isEmpty else {
             return raw
@@ -201,11 +299,26 @@ open class PocketBase: @unchecked Sendable {
         }
     }
 
+    /// Builds the URL for a file stored in a record.
+    ///
+    /// - Parameters:
+    ///   - record: The record that owns the file.
+    ///   - filename: The stored filename.
+    ///   - queryParams: Additional query parameters such as `thumb` or `token`.
+    /// - Returns: The absolute file URL.
+    /// - Important: Deprecated. Use ``FileService/getURL(record:filename:queryParams:)`` instead.
     @available(*, deprecated, message: "Use files.getURL instead.")
     open func getFileUrl(record: RecordModel, filename: String, queryParams: [String: AnyCodable] = [:]) -> String {
         return files.getURL(record: record, filename: filename, queryParams: queryParams)
     }
 
+    /// Joins a path with the client's base URL.
+    ///
+    /// A single slash is inserted between the base URL and the path. An empty
+    /// path returns the base URL unchanged.
+    ///
+    /// - Parameter path: The API path, with or without a leading slash.
+    /// - Returns: The absolute URL string.
     open func buildURL(path: String) -> String {
         var url = baseURL
         if path.isEmpty {
@@ -220,6 +333,14 @@ open class PocketBase: @unchecked Sendable {
         return url + cleanPath
     }
 
+    /// Sends a request and decodes the JSON response into `T`.
+    ///
+    /// - Parameters:
+    ///   - path: The API path, relative to ``baseURL``.
+    ///   - options: The request options.
+    /// - Returns: The decoded response.
+    /// - Throws: A ``ClientResponseError`` when the request fails or the
+    ///   response cannot be decoded into `T`.
     open func send<T: Decodable & Sendable>(path: String, options: SendOptions) async throws -> T {
         let rawData = try await sendRaw(path: path, options: options)
         let decoder = JSONDecoder()
@@ -235,6 +356,19 @@ open class PocketBase: @unchecked Sendable {
         }
     }
 
+    /// Sends a request and returns the raw response body.
+    ///
+    /// This is the pipeline used by every service: it runs the ``beforeSend``
+    /// and ``afterSend`` hooks, serializes query parameters and the body,
+    /// registers the request for auto-cancellation, and maps HTTP error
+    /// statuses to ``ClientResponseError``.
+    ///
+    /// - Parameters:
+    ///   - path: The API path, relative to ``baseURL``.
+    ///   - options: The request options.
+    /// - Returns: The raw response body.
+    /// - Throws: A ``ClientResponseError`` when the request fails or the server
+    ///   responds with an error status.
     open func sendRaw(path: String, options: SendOptions) async throws -> Data {
         var initOptions = initSendOptions(path: path, options: options)
         let cancellationKey = autoCancellationKey(path: path, options: initOptions)
@@ -435,4 +569,5 @@ open class PocketBase: @unchecked Sendable {
     }
 }
 
+/// An alias for ``PocketBase``.
 public typealias Client = PocketBase

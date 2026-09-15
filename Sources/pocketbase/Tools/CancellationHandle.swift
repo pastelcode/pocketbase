@@ -12,6 +12,7 @@ final class CancellationHandle: @unchecked Sendable {
     private var cancelBlock: (() -> Void)?
     private var isCancelledFlag = false
 
+    /// Whether ``cancel()`` has already been invoked.
     var isCancelled: Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -31,6 +32,9 @@ final class CancellationHandle: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Cancels the handle and runs the registered block once.
+    ///
+    /// Subsequent calls are ignored.
     func cancel() {
         lock.lock()
         guard !isCancelledFlag else {

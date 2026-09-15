@@ -212,6 +212,23 @@ res.headers.add(name: "Set-Cookie", value: setCookieHeader)
 
 ---
 
+## 📚 Documentation
+
+API reference docs are generated with [DocC](https://www.swift.org/documentation/docc/) from the `///` comments in `Sources/pocketbase` and the articles in `Sources/pocketbase/pocketbase.docc`.
+
+- **In Xcode:** open the package and choose **Product > Build Documentation**.
+- **From the command line:**
+
+  ```sh
+  xcodebuild docbuild -scheme pocketbase -destination 'generic/platform=macOS'
+  ```
+
+  The generated `pocketbase.doccarchive` can be opened in Xcode or served with `docc preview`.
+
+The catalog includes getting started, authentication, realtime and queries/filtering articles.
+
+---
+
 ## 📄 License
 
 This project is licensed under the [MIT License](LICENSE.md).

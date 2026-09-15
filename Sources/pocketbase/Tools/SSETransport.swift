@@ -9,10 +9,17 @@ import FoundationNetworking
 /// and the transport can be swapped per platform without touching the state
 /// machine.
 protocol SSETransport: AnyObject, Sendable {
+    /// Called for every frame parsed from the stream.
     var onEvent: (@Sendable (SSEEvent) -> Void)? { get set }
+    /// Called once when the stream ends or fails.
     var onDisconnect: (@Sendable (Error?) -> Void)? { get set }
 
+    /// Opens the SSE connection to the given URL.
+    ///
+    /// - Parameter url: The stream endpoint.
+    /// - Parameter headers: Additional request headers, such as `Authorization`.
     func connect(url: URL, headers: [String: String])
+    /// Closes the connection and suppresses any further disconnect callbacks.
     func cancel()
 }
 
@@ -21,7 +28,9 @@ protocol SSETransport: AnyObject, Sendable {
 /// A dedicated session with a delegate is required: `URLSession.shared` has no
 /// delegate, so any bytes sent to it (such as an SSE stream) are discarded.
 final class URLSessionSSETransport: NSObject, SSETransport, URLSessionDataDelegate, @unchecked Sendable {
+    /// Called for every frame parsed from the stream.
     var onEvent: (@Sendable (SSEEvent) -> Void)?
+    /// Called once when the stream ends or fails.
     var onDisconnect: (@Sendable (Error?) -> Void)?
 
     private let lock = NSRecursiveLock()
@@ -32,6 +41,7 @@ final class URLSessionSSETransport: NSObject, SSETransport, URLSessionDataDelega
     private var isCancelled = false
     private var didReportDisconnect = false
 
+    /// Creates a transport backed by an ephemeral `URLSession`.
     override init() {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
@@ -47,6 +57,12 @@ final class URLSessionSSETransport: NSObject, SSETransport, URLSessionDataDelega
         session?.invalidateAndCancel()
     }
 
+    /// Opens the SSE connection to the given URL.
+    ///
+    /// Sends `Accept: text/event-stream` and applies the extra headers.
+    ///
+    /// - Parameter url: The stream endpoint.
+    /// - Parameter headers: Additional request headers.
     func connect(url: URL, headers: [String: String]) {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -71,6 +87,7 @@ final class URLSessionSSETransport: NSObject, SSETransport, URLSessionDataDelega
         task.resume()
     }
 
+    /// Closes the connection and suppresses any further disconnect callbacks.
     func cancel() {
         lock.lock()
         isCancelled = true
@@ -82,6 +99,14 @@ final class URLSessionSSETransport: NSObject, SSETransport, URLSessionDataDelega
 
     // MARK: - URLSessionDataDelegate
 
+    /// Validates the HTTP response before allowing the stream to continue.
+    ///
+    /// Non-HTTP or non-2xx responses cancel the task and report a disconnect.
+    ///
+    /// - Parameter session: The session that received the response.
+    /// - Parameter dataTask: The task that received the response.
+    /// - Parameter response: The received response.
+    /// - Parameter completionHandler: Receives the disposition for the response.
     func urlSession(
         _ session: URLSession,
         dataTask: URLSessionDataTask,
@@ -107,6 +132,11 @@ final class URLSessionSSETransport: NSObject, SSETransport, URLSessionDataDelega
         completionHandler(.allow)
     }
 
+    /// Feeds received bytes to the parser and forwards completed frames.
+    ///
+    /// - Parameter session: The session that received the data.
+    /// - Parameter dataTask: The task that received the data.
+    /// - Parameter data: The newly received bytes.
     func urlSession(
         _ session: URLSession,
         dataTask: URLSessionDataTask,
@@ -122,6 +152,11 @@ final class URLSessionSSETransport: NSObject, SSETransport, URLSessionDataDelega
         }
     }
 
+    /// Reports the stream end or failure to ``onDisconnect``.
+    ///
+    /// - Parameter session: The session that completed the task.
+    /// - Parameter task: The completed task.
+    /// - Parameter error: The failure, or `nil` for a clean end of stream.
     func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
@@ -130,6 +165,9 @@ final class URLSessionSSETransport: NSObject, SSETransport, URLSessionDataDelega
         reportDisconnect(error)
     }
 
+    /// Delivers the disconnect callback at most once per connection.
+    ///
+    /// - Parameter error: The failure, or `nil` for a clean end of stream.
     private func reportDisconnect(_ error: Error?) {
         lock.lock()
         if isCancelled || didReportDisconnect {

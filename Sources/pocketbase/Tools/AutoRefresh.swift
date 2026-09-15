@@ -1,10 +1,47 @@
 import Foundation
 
+/// Registers and removes automatic token refresh hooks on a ``PocketBase`` client.
 public struct AutoRefresh: Sendable {
+    /// Removes the auto-refresh hook previously registered on `client`.
+    ///
+    /// - Parameter client: The client whose hook should be removed.
     public static func resetAutoRefresh(_ client: PocketBase) {
         client.resetAutoRefreshHook()
     }
 
+    /// Installs a hook that refreshes or re-authenticates before requests.
+    ///
+    /// The hook runs before every request whose options do not set
+    /// ``SendOptions/autoRefresh`` to `true`. If the stored token is valid but
+    /// expires within `threshold` seconds, `refreshFunc` is invoked; if the
+    /// token is invalid or the refresh fails, `reauthenticateFunc` is invoked.
+    /// Any previously registered hook is removed first, and the hook resets
+    /// itself when the auth store is cleared or switches record.
+    ///
+    /// ```swift
+    /// AutoRefresh.registerAutoRefresh(
+    ///     pb,
+    ///     threshold: 60,
+    ///     refreshFunc: {
+    ///         let _: RecordAuthResponse<RecordModel> = try await pb.collection("users").authRefresh()
+    ///     },
+    ///     reauthenticateFunc: {
+    ///         let _: RecordAuthResponse<RecordModel> = try await pb.collection("users").authWithPassword(
+    ///             usernameOrEmail: "user@example.com",
+    ///             password: "secret"
+    ///         )
+    ///     }
+    /// )
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - client: The client to attach the hook to.
+    ///   - threshold: The refresh threshold in seconds. A valid token that
+    ///     expires within this window is refreshed.
+    ///   - refreshFunc: Asynchronously refreshes the auth token. Errors are
+    ///     treated as a failed refresh and trigger reauthentication.
+    ///   - reauthenticateFunc: Asynchronously re-authenticates the user.
+    ///     Errors propagate to the pending request.
     public static func registerAutoRefresh(
         _ client: PocketBase,
         threshold: Double,

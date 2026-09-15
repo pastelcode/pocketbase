@@ -1,10 +1,35 @@
 import Foundation
 
+/// An encoded `multipart/form-data` request body.
+///
+/// The initializer serializes the form fields into a single ``bodyData``
+/// payload separated by ``boundary`` and exposes the matching `Content-Type`
+/// value in ``contentTypeHeader``.
+///
+/// ```swift
+/// let formData = MultipartFormData(fields: [
+///     "title": .string("Hello"),
+///     "avatar": .file(FileParam(filename: "avatar.png", mimeType: "image/png", data: pngData))
+/// ])
+/// ```
 public struct MultipartFormData: Sendable {
+    /// The boundary string that separates the encoded parts.
     public let boundary: String
+    /// The fully encoded request body.
     public let bodyData: Data
+    /// The value for the request's `Content-Type` header.
     public let contentTypeHeader: String
 
+    /// Encodes the given form fields into a multipart body.
+    ///
+    /// String and JSON values are written as plain parts, while files include
+    /// their filename and MIME type.
+    ///
+    /// - Parameters:
+    ///   - fields: A dictionary of form field names to
+    ///     ``SendOptions/FormValue`` values.
+    ///   - boundary: The multipart boundary. Defaults to a unique generated
+    ///     string.
     public init(fields: [String: SendOptions.FormValue], boundary: String = "Boundary-\(UUID().uuidString)") {
         self.boundary = boundary
         self.contentTypeHeader = "multipart/form-data; boundary=\(boundary)"
