@@ -19,6 +19,31 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
         fatalError("baseCrudPath must be overridden by subclass")
     }
 
+    /// Converts a raw decoded list item into the service's model type.
+    ///
+    /// The default implementation re-encodes the value and decodes it as `T`.
+    /// Override this method to customize how ``getList(page:perPage:options:)``
+    /// materializes items, for example to normalize field names before decoding.
+    ///
+    /// ```swift
+    /// final class PostsService: CrudService<RecordModel> {
+    ///     override var baseCrudPath: String { "/api/collections/posts/records" }
+    ///
+    ///     override func decode<T: Codable & Sendable>(_ item: AnyCodable) throws -> T {
+    ///         // transform `item` before decoding
+    ///         try super.decode(item)
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// - Parameter item: The raw item decoded from the list response.
+    /// - Returns: The typed item.
+    /// - Throws: An error when the value cannot be converted to `T`.
+    open func decode<T: Codable & Sendable>(_ item: AnyCodable) throws -> T {
+        let data = try JSONEncoder().encode(item)
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
     /// Returns all records matching the options, fetching pages internally
     /// until the result set is exhausted.
     ///
@@ -50,6 +75,9 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
 
     /// Returns a paginated list of items.
     ///
+    /// Items are materialized through ``decode(_:)``, which subclasses can
+    /// override to customize decoding.
+    ///
     /// - Parameters:
     ///   - page: The 1-based page number. Defaults to `1`.
     ///   - perPage: The number of items per page. Defaults to `30`.
@@ -64,7 +92,15 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
             "perPage": AnyCodable(perPage)
         ])
 
-        return try await client.send(path: baseCrudPath, options: opt)
+        let rawList: ListResult<AnyCodable> = try await client.send(path: baseCrudPath, options: opt)
+        let items: [T] = try rawList.items.map { try decode($0) }
+        return ListResult(
+            page: rawList.page,
+            perPage: rawList.perPage,
+            totalItems: rawList.totalItems,
+            totalPages: rawList.totalPages,
+            items: items
+        )
     }
 
     /// Returns the first item matching the filter.

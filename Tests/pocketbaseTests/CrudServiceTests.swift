@@ -95,4 +95,57 @@ struct CrudServiceTests {
             #expect(err.message.contains("Missing required record id"))
         }
     }
+
+    @Test func testDecodeHookIsApplied() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let service = UppercasingPostsService(client)
+
+        let fetchMock = FetchMock()
+        await fetchMock.on(RequestMock(
+            method: "GET",
+            url: "http://127.0.0.1:8090/api/collections/posts/records?page=1&perPage=30",
+            replyCode: 200,
+            jsonBody: [
+                "page": 1,
+                "perPage": 30,
+                "totalItems": 1,
+                "totalPages": 1,
+                "items": [
+                    ["id": "p1", "collectionId": "col1", "collectionName": "posts", "title": "hello"]
+                ]
+            ]
+        ))
+
+        var options = SendOptions()
+        options.fetch = await fetchMock.customFetch()
+
+        let list: ListResult<RecordModel> = try await service.getList(options: options)
+        #expect(list.items.count == 1)
+        #expect(list.items.first?["title"]?.stringValue == "HELLO")
+    }
+}
+
+/// A `CrudService` that overrides ``decode(_:)`` to uppercase the title field.
+private final class UppercasingPostsService: CrudService<RecordModel> {
+    override var baseCrudPath: String {
+        return "/api/collections/posts/records"
+    }
+
+    override func decode<T: Codable & Sendable>(_ item: AnyCodable) throws -> T {
+        guard let data = try? JSONEncoder().encode(item),
+              var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return try super.decode(item)
+        }
+
+        if let title = object["title"] as? String {
+            object["title"] = title.uppercased()
+        }
+
+        guard let newData = try? JSONSerialization.data(withJSONObject: object),
+              let transformed = try? JSONDecoder().decode(AnyCodable.self, from: newData) else {
+            return try super.decode(item)
+        }
+
+        return try super.decode(transformed)
+    }
 }
