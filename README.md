@@ -204,8 +204,8 @@ if let cookieHeader = req.headers["Cookie"].first {
 // Use PocketBase with authenticated user context...
 
 // Export cookie to set on response header
-let setCookieHeader = pb.authStore.exportToCookie(
-    options: CookieSerializeOptions(httpOnly: true, secure: true, sameSite: "Strict")
+let setCookieHeader = try pb.authStore.exportToCookie(
+    options: CookieSerializeOptions(httpOnly: true, secure: true, sameSite: .strict)
 )
 res.headers.add(name: "Set-Cookie", value: setCookieHeader)
 ```

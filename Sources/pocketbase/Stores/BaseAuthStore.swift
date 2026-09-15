@@ -127,13 +127,21 @@ open class BaseAuthStore: @unchecked Sendable {
         }
     }
 
-    /// Exports the current store state as cookie string.
-    open func exportToCookie(options: CookieSerializeOptions? = nil, key: String = "pb_auth") -> String {
+    /// Exports the current store state as a `Set-Cookie` header value.
+    ///
+    /// - Parameters:
+    ///   - options: Optional cookie attributes merged over the defaults
+    ///     (`path: "/"`, `httpOnly`, `secure` and `sameSite: .strict`).
+    ///   - key: The cookie name. Defaults to `"pb_auth"`.
+    /// - Returns: The serialized cookie string.
+    /// - Throws: A ``CookieSerializeError`` when the cookie cannot be
+    ///   serialized.
+    open func exportToCookie(options: CookieSerializeOptions? = nil, key: String = "pb_auth") throws -> String {
         var defaultOptions = CookieSerializeOptions(
             path: "/",
             httpOnly: true,
             secure: true,
-            sameSite: "Strict"
+            sameSite: .strict
         )
 
         let payload = JWTUtils.getTokenPayload(token)
@@ -155,6 +163,7 @@ open class BaseAuthStore: @unchecked Sendable {
 
         // Merge options
         if let userOpt = options {
+            if let encode = userOpt.encode { defaultOptions.encode = encode }
             if let maxAge = userOpt.maxAge { defaultOptions.maxAge = maxAge }
             if let domain = userOpt.domain { defaultOptions.domain = domain }
             if let path = userOpt.path { defaultOptions.path = path }
@@ -162,7 +171,7 @@ open class BaseAuthStore: @unchecked Sendable {
             if let httpOnly = userOpt.httpOnly { defaultOptions.httpOnly = httpOnly }
             if let secure = userOpt.secure { defaultOptions.secure = secure }
             if let priority = userOpt.priority { defaultOptions.priority = priority }
-            if let sameSite = userOpt.sameSite { defaultOptions.sameSite = sameSite }
+            if userOpt.sameSite != .unspecified { defaultOptions.sameSite = userOpt.sameSite }
         }
 
         let encoder = JSONEncoder()
@@ -175,10 +184,10 @@ open class BaseAuthStore: @unchecked Sendable {
 
         guard let payloadData = try? encoder.encode(rawDict),
               let jsonStr = String(data: payloadData, encoding: .utf8) else {
-            return CookieUtils.cookieSerialize(name: key, val: "", options: defaultOptions)
+            return try CookieUtils.cookieSerialize(name: key, val: "", options: defaultOptions)
         }
 
-        var result = CookieUtils.cookieSerialize(name: key, val: jsonStr, options: defaultOptions)
+        var result = try CookieUtils.cookieSerialize(name: key, val: jsonStr, options: defaultOptions)
 
         if exportRecord != nil && result.utf8.count > 4096 {
             // Strip down record model data to bare minimum
@@ -197,7 +206,7 @@ open class BaseAuthStore: @unchecked Sendable {
             rawDict["record"] = AnyCodable(exportRecord)
             if let payloadData2 = try? encoder.encode(rawDict),
                let jsonStr2 = String(data: payloadData2, encoding: .utf8) {
-                result = CookieUtils.cookieSerialize(name: key, val: jsonStr2, options: defaultOptions)
+                result = try CookieUtils.cookieSerialize(name: key, val: jsonStr2, options: defaultOptions)
             }
         }
 

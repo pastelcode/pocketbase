@@ -54,19 +54,33 @@ struct AuthStoreTests {
         #expect(callbackToken == "test_token")
     }
 
-    @Test func testCookieExportAndLoad() {
+    @Test func testCookieExportAndLoad() throws {
         let store = BaseAuthStore()
         let record = RecordModel(id: "rec3", collectionId: "col1", collectionName: "users")
         let token = dummyJWT(payload: ["id": "rec3", "type": "auth", "exp": Date().timeIntervalSince1970 + 3600])
 
         store.save(token: token, record: record)
-        let cookieStr = store.exportToCookie()
+        let cookieStr = try store.exportToCookie()
         #expect(cookieStr.contains("pb_auth="))
 
         let store2 = BaseAuthStore()
         store2.loadFromCookie(cookieStr)
         #expect(store2.token == token)
         #expect(store2.record?.id == "rec3")
+    }
+
+    @Test func testCookieRoundTripPreservesReservedCharacters() throws {
+        let store = BaseAuthStore()
+        let record = RecordModel(id: "rec4", collectionId: "col1", collectionName: "users")
+        let token = "a&b=c+d;e'f\"g\u{00E9}"
+
+        store.save(token: token, record: record)
+        let cookieStr = try store.exportToCookie()
+
+        let store2 = BaseAuthStore()
+        store2.loadFromCookie(cookieStr)
+        #expect(store2.token == token)
+        #expect(store2.record?.id == "rec4")
     }
 
     @Test func testLocalAuthStore() {
