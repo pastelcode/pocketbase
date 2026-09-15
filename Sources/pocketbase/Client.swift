@@ -54,6 +54,10 @@ open class PocketBase: @unchecked Sendable {
     /// Receives the resolved URL and ``SendOptions`` and returns a possibly
     /// modified pair. Useful for injecting headers or refreshing an expired
     /// token before the request goes out.
+    ///
+    /// - Note: The hook must return both the URL and the options. The
+    ///   deprecated options-only return shape from the reference SDK is not
+    ///   supported.
     open var beforeSend: (@Sendable (String, SendOptions) async throws -> (url: String, options: SendOptions))?
     /// An optional hook invoked after a response is received.
     ///
@@ -337,6 +341,9 @@ open class PocketBase: @unchecked Sendable {
 
     /// Sends a request and decodes the JSON response into `T`.
     ///
+    /// An empty response body (for example a `204 No Content`) is decoded as an
+    /// empty JSON object, matching the reference SDK.
+    ///
     /// - Parameters:
     ///   - path: The API path, relative to ``baseURL``.
     ///   - options: The request options.
@@ -345,9 +352,10 @@ open class PocketBase: @unchecked Sendable {
     ///   response cannot be decoded into `T`.
     open func send<T: Decodable & Sendable>(path: String, options: SendOptions) async throws -> T {
         let rawData = try await sendRaw(path: path, options: options)
-        let decoder = JSONDecoder()
+        // Match the reference SDK: an empty/unparsable body is treated as `{}`.
+        let data = rawData.isEmpty ? Data("{}".utf8) : rawData
         do {
-            return try decoder.decode(T.self, from: rawData)
+            return try JSONDecoder().decode(T.self, from: data)
         } catch {
             throw ClientResponseError(
                 url: buildURL(path: path),
@@ -401,17 +409,26 @@ open class PocketBase: @unchecked Sendable {
         }
 
         if let body = initOptions.body {
-            switch body {
-            case .data(let data):
-                request.httpBody = data
-            case .json(let dict):
-                request.httpBody = try? JSONEncoder().encode(dict)
-            case .rawJson(let anyCodable):
-                request.httpBody = try? JSONEncoder().encode(anyCodable)
-            case .form(let formFields):
-                let multipart = MultipartFormData(fields: formFields)
-                request.httpBody = multipart.bodyData
-                request.setValue(multipart.contentTypeHeader, forHTTPHeaderField: "Content-Type")
+            do {
+                switch body {
+                case .data(let data):
+                    request.httpBody = data
+                case .json(let dict):
+                    request.httpBody = try JSONEncoder().encode(dict)
+                case .rawJson(let anyCodable):
+                    request.httpBody = try JSONEncoder().encode(anyCodable)
+                case .form(let formFields):
+                    let multipart = MultipartFormData(fields: formFields)
+                    request.httpBody = multipart.bodyData
+                    request.setValue(multipart.contentTypeHeader, forHTTPHeaderField: "Content-Type")
+                }
+            } catch {
+                throw ClientResponseError(
+                    url: urlString,
+                    status: 0,
+                    originalError: error,
+                    message: "Failed to encode request body: \(error.localizedDescription)"
+                )
             }
         }
 
@@ -442,15 +459,12 @@ open class PocketBase: @unchecked Sendable {
                 requestTask.cancel()
             }
         } catch {
-            if handle?.isCancelled == true || Self.isCancellationError(error) {
-                throw ClientResponseError(
-                    url: urlString,
-                    status: 0,
-                    isAbort: true,
-                    originalError: error
-                )
-            }
-            throw error
+            throw ClientResponseError(
+                url: urlString,
+                status: 0,
+                isAbort: handle?.isCancelled == true,
+                originalError: error
+            )
         }
 
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -459,7 +473,16 @@ open class PocketBase: @unchecked Sendable {
 
         var finalData = data
         if let after = afterSend {
-            finalData = try await after(httpResponse, finalData, initOptions)
+            do {
+                finalData = try await after(httpResponse, finalData, initOptions)
+            } catch {
+                throw ClientResponseError(
+                    url: httpResponse.url?.absoluteString ?? urlString,
+                    status: 0,
+                    originalError: error,
+                    message: "afterSend hook failed: \(error.localizedDescription)"
+                )
+            }
         }
 
         if httpResponse.statusCode >= 400 {
@@ -488,9 +511,9 @@ open class PocketBase: @unchecked Sendable {
         // matching the reference SDK's unknown-option normalization.
         opt.applyShorthandQuery()
 
-        if getHeader(opt.headers, name: "Content-Type") == nil && opt.body != nil {
+        if getHeader(opt.headers, name: "Content-Type") == nil {
             if case .form = opt.body {
-                // Skip setting json Content-Type for form body
+                // A multipart body sets its own Content-Type (with boundary).
             } else {
                 opt.headers["Content-Type"] = "application/json"
             }
@@ -557,16 +580,6 @@ open class PocketBase: @unchecked Sendable {
         lock.unlock()
 
         handle.clear()
-    }
-
-    private static func isCancellationError(_ error: Error) -> Bool {
-        if error is CancellationError {
-            return true
-        }
-        if let urlError = error as? URLError, urlError.code == .cancelled {
-            return true
-        }
-        return false
     }
 
     private func getHeader(_ headers: [String: String], name: String) -> String? {
