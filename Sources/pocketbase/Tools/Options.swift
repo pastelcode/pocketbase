@@ -23,6 +23,11 @@ public struct SendOptions: Sendable {
     public var body: AnySendableBody?
     public var query: [String: AnyCodable]
     public var requestKey: String?
+    /// Set to `false` to exclude this request from auto-cancellation.
+    ///
+    /// When `nil` (the default) the request participates in auto-cancellation
+    /// normally. See `PocketBase.autoCancellation(_:)` for the global toggle.
+    public var autoCancel: Bool?
     public var fetch: CustomFetch?
     public var autoRefresh: Bool?
     public var autoRefreshThreshold: Double?
@@ -47,6 +52,7 @@ public struct SendOptions: Sendable {
         body: AnySendableBody? = nil,
         query: [String: AnyCodable] = [:],
         requestKey: String? = nil,
+        autoCancel: Bool? = nil,
         fetch: CustomFetch? = nil,
         autoRefresh: Bool? = nil,
         autoRefreshThreshold: Double? = nil
@@ -56,6 +62,7 @@ public struct SendOptions: Sendable {
         self.body = body
         self.query = query
         self.requestKey = requestKey
+        self.autoCancel = autoCancel
         self.fetch = fetch
         self.autoRefresh = autoRefresh
         self.autoRefreshThreshold = autoRefreshThreshold

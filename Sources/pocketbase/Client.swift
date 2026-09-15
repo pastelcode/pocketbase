@@ -24,6 +24,7 @@ open class PocketBase: @unchecked Sendable {
     private let lock = NSRecursiveLock()
     private var recordServices: [String: Any] = [:]
     private var enableAutoCancellation: Bool = true
+    private var cancelHandles: [String: CancellationHandle] = [:]
     private var resetAutoRefreshHandler: (@Sendable () -> Void)?
 
     public init(baseURL: String = "/", authStore: BaseAuthStore? = nil, lang: String = "en-US") {
@@ -85,14 +86,40 @@ open class PocketBase: @unchecked Sendable {
         return self
     }
 
+    /// Cancels a pending request by its cancellation key.
+    ///
+    /// Requests are registered under `SendOptions.requestKey`, or, when it is
+    /// not set, under `method + path`, matching the reference JS SDK.
     @discardableResult
     open func cancelRequest(_ requestKey: String) -> PocketBase {
+        lock.lock()
+        let handle = cancelHandles.removeValue(forKey: requestKey)
+        lock.unlock()
+
+        handle?.cancel()
         return self
     }
 
+    /// Cancels all pending cancellable requests.
     @discardableResult
     open func cancelAllRequests() -> PocketBase {
+        lock.lock()
+        let handles = Array(cancelHandles.values)
+        cancelHandles.removeAll()
+        lock.unlock()
+
+        for handle in handles {
+            handle.cancel()
+        }
         return self
+    }
+
+    /// Number of requests currently registered for auto-cancellation.
+    /// Internal so tests can assert that the registry is cleaned up.
+    var pendingRequestCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelHandles.count
     }
 
     func setAutoRefreshResetHandler(_ handler: (@Sendable () -> Void)?) {
@@ -210,6 +237,7 @@ open class PocketBase: @unchecked Sendable {
 
     open func sendRaw(path: String, options: SendOptions) async throws -> Data {
         var initOptions = initSendOptions(path: path, options: options)
+        let cancellationKey = autoCancellationKey(path: path, options: initOptions)
         var urlString = buildURL(path: path)
 
         if let before = beforeSend {
@@ -251,13 +279,41 @@ open class PocketBase: @unchecked Sendable {
             }
         }
 
+        let handle = beginRequest(key: cancellationKey)
+        defer {
+            endRequest(key: cancellationKey, handle: handle)
+        }
+
+        // Run the request in a cancellable task so both key-based cancellation
+        // and the caller's task cancellation abort the in-flight operation.
+        let requestTask = Task { () -> (Data, URLResponse) in
+            if let customFetch = initOptions.fetch {
+                return try await customFetch(request)
+            }
+            return try await URLSession.shared.data(for: request)
+        }
+        handle?.onCancel {
+            requestTask.cancel()
+        }
+
         let data: Data
         let response: URLResponse
-
-        if let customFetch = initOptions.fetch {
-            (data, response) = try await customFetch(request)
-        } else {
-            (data, response) = try await URLSession.shared.data(for: request)
+        do {
+            (data, response) = try await withTaskCancellationHandler {
+                try await requestTask.value
+            } onCancel: {
+                requestTask.cancel()
+            }
+        } catch {
+            if handle?.isCancelled == true || Self.isCancellationError(error) {
+                throw ClientResponseError(
+                    url: urlString,
+                    status: 0,
+                    isAbort: true,
+                    originalError: error
+                )
+            }
+            throw error
         }
 
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -304,6 +360,68 @@ open class PocketBase: @unchecked Sendable {
         }
 
         return opt
+    }
+
+    /// Resolves the cancellation key for a request, or `nil` when the request
+    /// should not participate in auto-cancellation.
+    ///
+    /// Mirrors the JS SDK: the key is `requestKey`, or `method + path` when not
+    /// set; `autoCancel == false` opts the request out.
+    private func autoCancellationKey(path: String, options: SendOptions) -> String? {
+        lock.lock()
+        let enabled = enableAutoCancellation
+        lock.unlock()
+
+        guard enabled, options.autoCancel != false else {
+            return nil
+        }
+
+        if let key = options.requestKey, !key.isEmpty {
+            return key
+        }
+
+        let method = options.method.isEmpty ? "GET" : options.method
+        return method + path
+    }
+
+    private func beginRequest(key: String?) -> CancellationHandle? {
+        guard let key = key else {
+            return nil
+        }
+
+        lock.lock()
+        let previous = cancelHandles.removeValue(forKey: key)
+        let handle = CancellationHandle()
+        cancelHandles[key] = handle
+        lock.unlock()
+
+        // Cancel the superseded request outside the lock to avoid re-entrancy.
+        previous?.cancel()
+        return handle
+    }
+
+    private func endRequest(key: String?, handle: CancellationHandle?) {
+        guard let key = key, let handle = handle else {
+            return
+        }
+
+        lock.lock()
+        if let current = cancelHandles[key], current === handle {
+            cancelHandles.removeValue(forKey: key)
+        }
+        lock.unlock()
+
+        handle.clear()
+    }
+
+    private static func isCancellationError(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+        if let urlError = error as? URLError, urlError.code == .cancelled {
+            return true
+        }
+        return false
     }
 
     private func getHeader(_ headers: [String: String], name: String) -> String? {
