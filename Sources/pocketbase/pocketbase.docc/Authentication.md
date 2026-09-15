@@ -36,6 +36,8 @@ Three stores are available:
 - ``LocalAuthStore`` — persists to `UserDefaults`. This is the default.
 - ``AsyncAuthStore`` — persists through your own async `save`/`clear` closures, for example to the Keychain. Operations run in the order they are enqueued.
 
+> Important: `UserDefaults` is convenient but not encrypted, so it is only suitable for development. For production, use ``AsyncAuthStore`` backed by the Keychain (recommended) — or another secure store — so the token is not readable from a plain-text app container or backup.
+
 ```swift
 let store = AsyncAuthStore(
     save: { payload in
@@ -56,6 +58,25 @@ let unsubscribe = pb.authStore.onChange { token, record in
     print("token changed:", token.isEmpty ? "cleared" : "set")
 }
 ```
+
+## Cookies and server-side rendering
+
+Cookies are only used to hand the auth state between a browser and a Swift server (Vapor, Hummingbird). A per-request ``PocketBase`` instance restores the state from the request's `Cookie` header and returns the updated state in a `Set-Cookie` header:
+
+```swift
+let pb = PocketBase(baseURL: "https://example.com", authStore: BaseAuthStore())
+
+if let cookieHeader = req.headers["Cookie"].first {
+    pb.authStore.loadFromCookie(cookieHeader)
+}
+
+// ... perform server-side work with the authenticated context ...
+
+let setCookie = try pb.authStore.exportToCookie()
+res.headers.add(name: "Set-Cookie", value: setCookie)
+```
+
+Native clients do not need cookies: the token lives in ``PocketBase/authStore`` and is sent as an `Authorization` header on every request, including the realtime SSE connection. Use cookies only for the browser/server handoff, preferably with `httpOnly` and `secure` so the token stays out of reach of client-side JavaScript.
 
 ## OAuth2 and OTP
 

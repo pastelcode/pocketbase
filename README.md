@@ -12,7 +12,7 @@ A modern, light-weight, fully-typed Swift SDK for [PocketBase](https://pocketbas
 
 - **Swift 6 & Concurrency**: Complete `async/await` async support with `Sendable` thread-safe architecture.
 - **Cross-Platform Support**: Works on iOS (15+), macOS (12+), tvOS (15+), watchOS (8+), and Swift Server (Vapor / Hummingbird).
-- **Automatic Auth Persistence**: Built-in `LocalAuthStore` using `UserDefaults` to persist authentication across app restarts.
+- **Automatic Auth Persistence**: Built-in `LocalAuthStore` using `UserDefaults` to persist authentication across app restarts. For production, back `AsyncAuthStore` with the Keychain (recommended).
 - **SSR & Cookie Support**: `loadFromCookie` and `exportToCookie` methods for Server-Side Rendering.
 - **Type-Safe Dynamic Fields**: [`AnyCodable`](Sources/pocketbase/Tools/AnyCodable.swift) helper for type-safe handling of dynamic JSON schema fields and expanded relations.
 - **Full API Parity**:
@@ -191,6 +191,8 @@ let batchResults = try await batch.send()
 ---
 
 ## 🖥️ Server-Side Rendering (Vapor / Swift Server)
+
+Cookies are only used for the SSR handoff between a browser and your Swift server: `loadFromCookie` restores the auth state from the request's `Cookie` header, and `exportToCookie` produces the `Set-Cookie` value returned to the browser. Native iOS/Android clients don't need cookies — the token is sent as an `Authorization` header on every request, including realtime.
 
 ```swift
 // Per-request PocketBase instance
