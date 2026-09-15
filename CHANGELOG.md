@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `swift-pocketbase-sdk` will be documented in this file.
+All notable changes to `pocketbase` will be documented in this file.
 
 ## [0.1.0] - 2026-07-31
 

@@ -1,6 +1,6 @@
 import Testing
 import Foundation
-@testable import swift_pocketbase_sdk
+@testable import pocketbase
 
 struct ServicesTests {
     @Test func testFileServiceGetURL() {

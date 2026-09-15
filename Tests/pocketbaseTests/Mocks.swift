@@ -3,7 +3,7 @@ import Foundation
 import FoundationNetworking
 #endif
 import Testing
-@testable import swift_pocketbase_sdk
+@testable import pocketbase
 
 public struct RequestMock: Sendable {
     public var method: String?

@@ -3,7 +3,7 @@ import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
-@testable import swift_pocketbase_sdk
+@testable import pocketbase
 
 struct SSEParserTests {
     @Test func parsesSingleFrame() {

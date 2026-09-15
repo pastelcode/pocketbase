@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "swift-pocketbase-sdk",
+    name: "pocketbase",
     platforms: [
         .macOS(.v12),
         .iOS(.v15),
@@ -11,17 +11,17 @@ let package = Package(
     ],
     products: [
         .library(
-            name: "swift-pocketbase-sdk",
-            targets: ["swift-pocketbase-sdk"]
+            name: "pocketbase",
+            targets: ["pocketbase"]
         ),
     ],
     targets: [
         .target(
-            name: "swift-pocketbase-sdk"
+            name: "pocketbase"
         ),
         .testTarget(
-            name: "swift-pocketbase-sdkTests",
-            dependencies: ["swift-pocketbase-sdk"]
+            name: "pocketbaseTests",
+            dependencies: ["pocketbase"]
         ),
     ]
 )

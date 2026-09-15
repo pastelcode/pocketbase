@@ -14,7 +14,7 @@ A modern, light-weight, fully-typed Swift SDK for [PocketBase](https://pocketbas
 - **Cross-Platform Support**: Works on iOS (15+), macOS (12+), tvOS (15+), watchOS (8+), and Swift Server (Vapor / Hummingbird).
 - **Automatic Auth Persistence**: Built-in `LocalAuthStore` using `UserDefaults` to persist authentication across app restarts.
 - **SSR & Cookie Support**: `loadFromCookie` and `exportToCookie` methods for Server-Side Rendering.
-- **Type-Safe Dynamic Fields**: [`AnyCodable`](file:///Users/baibhavmandal/Documents/package/swift-pocketbase-sdk/Sources/swift-pocketbase-sdk/Tools/AnyCodable.swift) helper for type-safe handling of dynamic JSON schema fields and expanded relations.
+- **Type-Safe Dynamic Fields**: [`AnyCodable`](Sources/pocketbase/Tools/AnyCodable.swift) helper for type-safe handling of dynamic JSON schema fields and expanded relations.
 - **Full API Parity**:
   - `RecordService` (CRUD, Password Auth, OAuth2, OTP, Password Reset, Email Verification, Email Change, Impersonation)
   - `CollectionService` (Schemas, Scaffolding, Import, Truncate, Dry-Run View Query)
@@ -33,14 +33,14 @@ A modern, light-weight, fully-typed Swift SDK for [PocketBase](https://pocketbas
 1. Go to **File > Add Package Dependencies...**
 2. Enter the repository URL:
    ```text
-   https://github.com/YOUR_USERNAME/swift-pocketbase-sdk.git
+   https://github.com/pastelcode/pocketbase.git
    ```
 3. Set **Dependency Rule** to `Up to Next Major Version` from `0.1.0`.
 
 #### In `Package.swift`:
 ```swift
 dependencies: [
-    .package(url: "https://github.com/YOUR_USERNAME/swift-pocketbase-sdk.git", from: "0.1.0")
+    .package(url: "https://github.com/pastelcode/pocketbase.git", from: "0.1.0")
 ]
 ```
 
@@ -51,7 +51,7 @@ dependencies: [
 ### 1. Initialization
 
 ```swift
-import swift_pocketbase_sdk
+import pocketbase
 
 // Initialize client
 let pb = PocketBase(baseURL: "https://example.com")
@@ -120,7 +120,7 @@ try await pb.collection("posts").delete(id: newPost.id)
 
 ```swift
 import SwiftUI
-import swift_pocketbase_sdk
+import pocketbase
 
 let pb = PocketBase(baseURL: "https://example.com")
 
