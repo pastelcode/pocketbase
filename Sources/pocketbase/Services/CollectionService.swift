@@ -14,15 +14,16 @@ open class CollectionService: CrudService<CollectionModel>, @unchecked Sendable 
     ///
     /// Existing collections with matching names are updated, and new ones are created.
     ///
-    /// - Note: Named `importCollections` because `import` is a reserved Swift
-    ///   keyword. The reference SDK exposes the same operation as `import`.
+    /// Declared using Swift's escaped-identifier syntax because `import` is a
+    /// reserved keyword; the escaping backticks are not required at the call
+    /// site (`service.import(...)`).
     ///
     /// - Parameter collections: The collections to import.
     /// - Parameter deleteMissing: Whether collections absent from `collections` should be deleted.
     /// - Parameter options: Additional send options. The `PUT` method and JSON body are applied by default.
     /// - Returns: `true` when the import succeeds.
     /// - Throws: A ``ClientResponseError`` when the request fails.
-    open func importCollections(_ collections: [CollectionModel], deleteMissing: Bool = false, options: SendOptions? = nil) async throws -> Bool {
+    open func `import`(_ collections: [CollectionModel], deleteMissing: Bool = false, options: SendOptions? = nil) async throws -> Bool {
         var opt = options ?? SendOptions()
         opt.applyDefaultMethod("PUT")
         opt.applyDefaultBody(.json([

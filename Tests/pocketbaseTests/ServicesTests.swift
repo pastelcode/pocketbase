@@ -118,4 +118,22 @@ struct ServicesTests {
         let result = try await client.logs.truncate(options: opt)
         #expect(result == true)
     }
+
+    @Test func testCollectionImport() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let fetchMock = FetchMock()
+
+        await fetchMock.on(RequestMock(
+            method: "PUT",
+            url: "http://127.0.0.1:8090/api/collections/import",
+            replyCode: 204
+        ))
+
+        var opt = SendOptions()
+        opt.fetch = await fetchMock.customFetch()
+
+        let collection = CollectionModel(id: "c1", name: "posts", type: "base")
+        let result = try await client.collections.import([collection], deleteMissing: true, options: opt)
+        #expect(result == true)
+    }
 }
