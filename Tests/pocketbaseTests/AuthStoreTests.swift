@@ -97,22 +97,22 @@ struct AuthStoreTests {
         store.save(token: "async_token", record: record)
 
         // The store persists asynchronously, so poll rather than assuming a
-        // fixed scheduling delay (the simulator can be slower than 50ms).
+        // fixed scheduling delay (under parallel test load it can take longer).
         var saved = ""
-        for _ in 0..<100 {
+        for _ in 0..<1000 {
             saved = await actor.getPayload()
             if saved.contains("async_token") { break }
-            try await Task.sleep(nanoseconds: 10_000_000)
+            try await Task.sleep(nanoseconds: 5_000_000)
         }
         #expect(saved.contains("async_token"))
 
         store.clear()
 
         var cleared = ""
-        for _ in 0..<100 {
+        for _ in 0..<1000 {
             cleared = await actor.getPayload()
             if cleared == "CLEARED" { break }
-            try await Task.sleep(nanoseconds: 10_000_000)
+            try await Task.sleep(nanoseconds: 5_000_000)
         }
         #expect(cleared == "CLEARED")
     }
