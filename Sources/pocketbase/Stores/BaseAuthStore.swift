@@ -5,8 +5,9 @@ import Foundation
 /// ``BaseAuthStore`` is the base class for the auth stores used by
 /// ``PocketBase``. It keeps the authentication state in memory and notifies
 /// observers registered through ``onChange(fireImmediately:callback:)`` after
-/// every change. Use ``LocalAuthStore`` or ``AsyncAuthStore`` when the state
-/// must survive app restarts.
+/// every change. Subclasses that persist the state can additionally route their
+/// updates through ``triggerChange()``. Use ``LocalAuthStore`` or
+/// ``AsyncAuthStore`` when the state must survive app restarts.
 open class BaseAuthStore: @unchecked Sendable {
     private let lock = NSRecursiveLock()
 
@@ -94,22 +95,53 @@ open class BaseAuthStore: @unchecked Sendable {
         return payload["type"]?.value.string == "auth" && !isSuperuser
     }
 
-    /// Saves the provided new token and record data in the auth store.
+    /// Saves the provided new token and record data in the auth store and
+    /// notifies the registered observers.
+    ///
+    /// - Parameters:
+    ///   - token: The new authentication token.
+    ///   - record: The new authentication record. Defaults to `nil`.
     open func save(token: String, record: RecordModel? = nil) {
         lock.lock()
         self._token = token
         self._record = record
+        lock.unlock()
+
+        triggerChange()
+    }
+
+    /// Removes the stored token and record data from the auth store and
+    /// notifies the registered observers.
+    ///
+    /// Unlike ``save(token:record:)`` this does not go through the overridable
+    /// save method, so subclasses can implement it with a single storage
+    /// operation.
+    open func clear() {
+        lock.lock()
+        self._token = ""
+        self._record = nil
+        lock.unlock()
+
+        triggerChange()
+    }
+
+    /// Notifies all registered observers with the current token and record.
+    ///
+    /// The values are read through the ``token`` and ``record`` getters, so
+    /// live stores (such as ``LocalAuthStore``) report the freshly persisted
+    /// state. Override this method in a subclass to emit change events to
+    /// observers without performing a full ``save(token:record:)``; the
+    /// override should call `super` to keep invoking the registered callbacks.
+    open func triggerChange() {
+        lock.lock()
         let callbacks = Array(_onChangeCallbacks.values)
         lock.unlock()
 
+        let token = self.token
+        let record = self.record
         for callback in callbacks {
             callback(token, record)
         }
-    }
-
-    /// Removes the stored token and record data from the auth store.
-    open func clear() {
-        save(token: "", record: nil)
     }
 
     /// Parses the provided cookie string and updates the store state.
@@ -184,11 +216,9 @@ open class BaseAuthStore: @unchecked Sendable {
         }
 
         let encoder = JSONEncoder()
-        var exportRecord: RecordModel? = record
-
         var rawDict: [String: AnyCodable] = [
             "token": AnyCodable(token),
-            "record": AnyCodable(exportRecord)
+            "record": AnyCodable(record)
         ]
 
         guard let payloadData = try? encoder.encode(rawDict),
@@ -198,21 +228,24 @@ open class BaseAuthStore: @unchecked Sendable {
 
         var result = try CookieUtils.cookieSerialize(name: key, val: jsonStr, options: defaultOptions)
 
-        if exportRecord != nil && result.utf8.count > 4096 {
-            // Strip down record model data to bare minimum
-            if var rec = exportRecord {
-                var strippedFields: [String: AnyCodable] = [:]
-                let extraProps = ["collectionId", "collectionName", "verified"]
-                for prop in extraProps {
-                    if let val = rec[prop] {
-                        strippedFields[prop] = val
-                    }
-                }
-                rec.rawFields = strippedFields
-                exportRecord = rec
+        if let record = record, result.utf8.count > 4096 {
+            // Strip down the record data to the bare minimum required to
+            // identify the auth record (same fields as the reference SDK).
+            var stripped: [String: AnyCodable] = ["id": AnyCodable(record.id)]
+            if let email = record["email"] {
+                stripped["email"] = email
+            }
+            if !record.collectionId.isEmpty {
+                stripped["collectionId"] = AnyCodable(record.collectionId)
+            }
+            if !record.collectionName.isEmpty {
+                stripped["collectionName"] = AnyCodable(record.collectionName)
+            }
+            if let verified = record["verified"] {
+                stripped["verified"] = verified
             }
 
-            rawDict["record"] = AnyCodable(exportRecord)
+            rawDict["record"] = AnyCodable(stripped)
             if let payloadData2 = try? encoder.encode(rawDict),
                let jsonStr2 = String(data: payloadData2, encoding: .utf8) {
                 result = try CookieUtils.cookieSerialize(name: key, val: jsonStr2, options: defaultOptions)
@@ -223,16 +256,20 @@ open class BaseAuthStore: @unchecked Sendable {
     }
 
     /// Register a callback function that will be called on store change.
+    ///
+    /// - Parameters:
+    ///   - fireImmediately: When `true`, invokes `callback` right after
+    ///     registration with the current state. Defaults to `false`.
+    ///   - callback: Invoked with the token and record on every change.
+    /// - Returns: A closure that unsubscribes the callback when called.
     open func onChange(fireImmediately: Bool = false, callback: @escaping (String, RecordModel?) -> Void) -> @Sendable () -> Void {
         let id = UUID()
         lock.lock()
         _onChangeCallbacks[id] = callback
-        let currentToken = _token
-        let currentRecord = _record
         lock.unlock()
 
         if fireImmediately {
-            callback(currentToken, currentRecord)
+            callback(token, record)
         }
 
         return { [weak self] in

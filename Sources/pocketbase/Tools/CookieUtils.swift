@@ -156,7 +156,7 @@ public struct CookieUtils: Sendable {
                 break
             }
 
-            var endIdx = characters[index...].firstIndex(of: ";") ?? characters.count
+            let endIdx = characters[index...].firstIndex(of: ";") ?? characters.count
             if endIdx < eqIdx {
                 // Backtrack on a prior semicolon: it belongs to the previous pair.
                 if let prior = characters[..<eqIdx].lastIndex(of: ";") {

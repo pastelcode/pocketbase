@@ -33,8 +33,8 @@ pb.authStore.clear()
 Three stores are available:
 
 - ``BaseAuthStore`` — in-memory only. Good for servers and tests.
-- ``LocalAuthStore`` — persists to `UserDefaults`. This is the default.
-- ``AsyncAuthStore`` — persists through your own async `save`/`clear` closures, for example to the Keychain. Operations run in the order they are enqueued.
+- ``LocalAuthStore`` — persists to `UserDefaults` and reads it on every access, so every instance backed by the same suite serves the latest persisted state. This is the default.
+- ``AsyncAuthStore`` — persists through your own async `save`/`clear` closures, for example to the Keychain. Operations run in the order they are enqueued, and the optional `initial` payload or `initialLoader` closure seeds the store as the first queued operation.
 
 > Important: `UserDefaults` is convenient but not encrypted, so it is only suitable for development. For production, use ``AsyncAuthStore`` backed by the Keychain (recommended) — or another secure store — so the token is not readable from a plain-text app container or backup.
 
@@ -45,6 +45,9 @@ let store = AsyncAuthStore(
     },
     clear: {
         try await keychain.delete()
+    },
+    initialLoader: {
+        try await keychain.read()
     }
 )
 
@@ -58,6 +61,8 @@ let unsubscribe = pb.authStore.onChange { token, record in
     print("token changed:", token.isEmpty ? "cleared" : "set")
 }
 ```
+
+The callback fires for changes made through the store instance. A custom store can emit change events for external updates by calling ``BaseAuthStore/triggerChange()``, which can also be overridden — call `super` to keep notifying the registered callbacks.
 
 ## Cookies and server-side rendering
 

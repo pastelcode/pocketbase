@@ -7,6 +7,11 @@ import Foundation
 /// they execute in the order they are enqueued, so a ``clear()`` is never
 /// persisted before an earlier ``save(token:record:)``.
 ///
+/// Errors thrown by the persistence closures are ignored — ``save(token:record:)``
+/// and ``clear()`` are synchronous and cannot surface them (the reference SDK
+/// reports them as unhandled promise rejections) — and the queue continues with
+/// the next operation.
+///
 /// ```swift
 /// let store = AsyncAuthStore(
 ///     save: { payload in
@@ -23,6 +28,12 @@ open class AsyncAuthStore: BaseAuthStore, @unchecked Sendable {
     public typealias AsyncSaveFunc = @Sendable (String) async throws -> Void
     /// A closure that asynchronously clears the persisted auth payload.
     public typealias AsyncClearFunc = @Sendable () async throws -> Void
+    /// A closure that asynchronously loads the initial JSON auth payload.
+    ///
+    /// The payload uses the same format as ``save(token:record:)`` receives: a
+    /// JSON string such as `{"token":"...","record":{...}}`. Return `nil` or
+    /// throw to start with an empty store.
+    public typealias AsyncInitialLoader = @Sendable () async throws -> String?
 
     private let saveFunc: AsyncSaveFunc
     private let clearFunc: AsyncClearFunc?
@@ -30,9 +41,8 @@ open class AsyncAuthStore: BaseAuthStore, @unchecked Sendable {
 
     /// Serial FIFO queue for the async save/clear operations.
     ///
-    /// `enqueue` is synchronous so the call order is preserved: `clear()`
-    /// triggers a polymorphic `save("")` from the base class before queueing
-    /// its own operation, and both must run in that order.
+    /// `enqueue` is synchronous so the call order is preserved even when
+    /// multiple saves and clears overlap.
     private final class AsyncOperationQueue: @unchecked Sendable {
         private let lock = NSLock()
         private var operations: [@Sendable () async -> Void] = []
@@ -80,8 +90,9 @@ open class AsyncAuthStore: BaseAuthStore, @unchecked Sendable {
     ///     every save.
     ///   - clear: Called on ``clear()``. When `nil`, the store enqueues
     ///     `save("")` instead. Defaults to `nil`.
-    ///   - initial: A JSON payload used to seed the in-memory state without
-    ///     invoking `save`. Defaults to `nil`.
+    ///   - initial: A JSON payload used to seed the store. It runs as the first
+    ///     queued operation and is persisted again through the `save` closure.
+    ///     Defaults to `nil`.
     public init(
         save: @escaping AsyncSaveFunc,
         clear: AsyncClearFunc? = nil,
@@ -91,8 +102,36 @@ open class AsyncAuthStore: BaseAuthStore, @unchecked Sendable {
         self.clearFunc = clear
         super.init()
 
-        if let initial = initial, !initial.isEmpty {
-            loadInitial(initial)
+        queue.enqueue { [weak self] in
+            self?.loadInitial(initial)
+        }
+    }
+
+    /// Creates a store whose initial state is loaded asynchronously.
+    ///
+    /// The loader runs as the first queued operation, so the loaded state is
+    /// applied before the saves and clears enqueued after it, and it is
+    /// persisted again through the `save` closure. A thrown error or a `nil`
+    /// return starts the store empty.
+    ///
+    /// - Parameters:
+    ///   - save: Called with the JSON-encoded token and record payload on
+    ///     every save.
+    ///   - clear: Called on ``clear()``. When `nil`, the store enqueues
+    ///     `save("")` instead. Defaults to `nil`.
+    ///   - initialLoader: An async closure returning the JSON payload used to
+    ///     seed the store.
+    public init(
+        save: @escaping AsyncSaveFunc,
+        clear: AsyncClearFunc? = nil,
+        initialLoader: @escaping AsyncInitialLoader
+    ) {
+        self.saveFunc = save
+        self.clearFunc = clear
+        super.init()
+
+        queue.enqueue { [weak self] in
+            self?.loadInitial(try? await initialLoader())
         }
     }
 
@@ -140,19 +179,22 @@ open class AsyncAuthStore: BaseAuthStore, @unchecked Sendable {
         }
     }
 
-    /// Seeds the in-memory state from an encoded JSON payload.
-    private func loadInitial(_ payload: String) {
-        guard let data = payload.data(using: .utf8) else { return }
-        let decoder = JSONDecoder()
-        if let jsonDict = try? decoder.decode([String: AnyCodable].self, from: data) {
-            let tokenStr = jsonDict["token"]?.value.string ?? ""
-            var recordModel: RecordModel? = nil
-            if let recVal = jsonDict["record"] ?? jsonDict["model"] {
-                if let recData = try? JSONEncoder().encode(recVal) {
-                    recordModel = try? decoder.decode(RecordModel.self, from: recData)
-                }
-            }
-            super.save(token: tokenStr, record: recordModel)
+    /// Seeds the store from an encoded JSON payload and persists it.
+    private func loadInitial(_ payload: String?) {
+        guard let payload = payload, !payload.isEmpty,
+              let data = payload.data(using: .utf8),
+              let jsonDict = try? JSONDecoder().decode([String: AnyCodable].self, from: data) else {
+            return
         }
+
+        let tokenStr = jsonDict["token"]?.value.string ?? ""
+        var recordModel: RecordModel? = nil
+        if let recVal = jsonDict["record"] ?? jsonDict["model"] {
+            if let recData = try? JSONEncoder().encode(recVal) {
+                recordModel = try? JSONDecoder().decode(RecordModel.self, from: recData)
+            }
+        }
+
+        save(token: tokenStr, record: recordModel)
     }
 }
