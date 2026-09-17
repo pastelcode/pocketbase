@@ -822,8 +822,14 @@ public struct BatchRequest: Codable, Equatable, Sendable {
     /// Request path relative to the API base URL.
     public var url: String
     /// JSON body of the request.
+    ///
+    /// Always serialized as the `body` field of the batch payload, even when
+    /// empty.
     public var json: [String: AnyCodable]?
     /// Files to upload, keyed by field name.
+    ///
+    /// A key ending with `+` tells the server to append to the existing field
+    /// instead of replacing it.
     public var files: [String: [FileParam]]?
     /// Additional request headers.
     public var headers: [String: String]?

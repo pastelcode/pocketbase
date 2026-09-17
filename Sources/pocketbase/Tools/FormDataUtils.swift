@@ -23,7 +23,8 @@ public struct MultipartFormData: Sendable {
     /// Encodes the given form fields into a multipart body.
     ///
     /// String and JSON values are written as plain parts, while files include
-    /// their filename and MIME type.
+    /// their filename and MIME type. ``SendOptions/FormValue/array(_:)`` values
+    /// emit one part per element under the same field name.
     ///
     /// - Parameters:
     ///   - fields: A dictionary of form field names to
@@ -37,40 +38,63 @@ public struct MultipartFormData: Sendable {
         var data = Data()
 
         for (key, val) in fields {
-            switch val {
-            case .string(let str):
-                data.append("--\(boundary)\r\n".data(using: .utf8)!)
-                data.append("Content-Disposition: form-data; name=\"\(key)\"\r\n\r\n".data(using: .utf8)!)
-                data.append("\(str)\r\n".data(using: .utf8)!)
-
-            case .json(let anyCodable):
-                let jsonEncoder = JSONEncoder()
-                if let encodedData = try? jsonEncoder.encode(anyCodable),
-                   let jsonString = String(data: encodedData, encoding: .utf8) {
-                    data.append("--\(boundary)\r\n".data(using: .utf8)!)
-                    data.append("Content-Disposition: form-data; name=\"\(key)\"\r\n\r\n".data(using: .utf8)!)
-                    data.append("\(jsonString)\r\n".data(using: .utf8)!)
-                }
-
-            case .file(let fileParam):
-                data.append("--\(boundary)\r\n".data(using: .utf8)!)
-                data.append("Content-Disposition: form-data; name=\"\(key)\"; filename=\"\(fileParam.filename)\"\r\n".data(using: .utf8)!)
-                data.append("Content-Type: \(fileParam.mimeType)\r\n\r\n".data(using: .utf8)!)
-                data.append(fileParam.data)
-                data.append("\r\n".data(using: .utf8)!)
-
-            case .files(let fileParams):
-                for fileParam in fileParams {
-                    data.append("--\(boundary)\r\n".data(using: .utf8)!)
-                    data.append("Content-Disposition: form-data; name=\"\(key)\"; filename=\"\(fileParam.filename)\"\r\n".data(using: .utf8)!)
-                    data.append("Content-Type: \(fileParam.mimeType)\r\n\r\n".data(using: .utf8)!)
-                    data.append(fileParam.data)
-                    data.append("\r\n".data(using: .utf8)!)
-                }
-            }
+            Self.append(val, named: key, boundary: boundary, to: &data)
         }
 
         data.append("--\(boundary)--\r\n".data(using: .utf8)!)
         self.bodyData = data
+    }
+
+    /// Appends the encoded representation of one form value to `data`.
+    private static func append(
+        _ value: SendOptions.FormValue,
+        named key: String,
+        boundary: String,
+        to data: inout Data
+    ) {
+        switch value {
+        case .string(let str):
+            data.append(textPart(named: key, value: str, boundary: boundary))
+
+        case .json(let anyCodable):
+            let jsonEncoder = JSONEncoder()
+            if let encodedData = try? jsonEncoder.encode(anyCodable),
+               let jsonString = String(data: encodedData, encoding: .utf8) {
+                data.append(textPart(named: key, value: jsonString, boundary: boundary))
+            }
+
+        case .file(let fileParam):
+            data.append(filePart(named: key, file: fileParam, boundary: boundary))
+
+        case .files(let fileParams):
+            for fileParam in fileParams {
+                data.append(filePart(named: key, file: fileParam, boundary: boundary))
+            }
+
+        case .array(let values):
+            for value in values {
+                append(value, named: key, boundary: boundary, to: &data)
+            }
+        }
+    }
+
+    /// Encodes a plain text part.
+    private static func textPart(named key: String, value: String, boundary: String) -> Data {
+        var data = Data()
+        data.append("--\(boundary)\r\n".data(using: .utf8)!)
+        data.append("Content-Disposition: form-data; name=\"\(key)\"\r\n\r\n".data(using: .utf8)!)
+        data.append("\(value)\r\n".data(using: .utf8)!)
+        return data
+    }
+
+    /// Encodes a file part with its filename and MIME type.
+    private static func filePart(named key: String, file fileParam: FileParam, boundary: String) -> Data {
+        var data = Data()
+        data.append("--\(boundary)\r\n".data(using: .utf8)!)
+        data.append("Content-Disposition: form-data; name=\"\(key)\"; filename=\"\(fileParam.filename)\"\r\n".data(using: .utf8)!)
+        data.append("Content-Type: \(fileParam.mimeType)\r\n\r\n".data(using: .utf8)!)
+        data.append(fileParam.data)
+        data.append("\r\n".data(using: .utf8)!)
+        return data
     }
 }

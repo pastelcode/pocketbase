@@ -58,6 +58,8 @@ The client exposes one service per PocketBase API group: ``PocketBase/collection
 ### Batch operations
 
 - ``BatchService``
+- ``SubBatchService``
+- ``BatchServiceError``
 - ``BatchRequest``
 - ``BatchRequestResult``
 

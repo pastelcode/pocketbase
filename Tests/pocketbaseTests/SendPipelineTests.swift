@@ -142,6 +142,34 @@ struct SendPipelineTests {
         #expect(header?.hasPrefix("multipart/form-data; boundary=") == true)
     }
 
+    @Test func formArrayAppendsRepeatedParts() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let capture = RequestCapture()
+        let fetch: CustomFetch = { request in
+            capture.store(request)
+            return (Data("{}".utf8), httpResponse(for: request))
+        }
+
+        var options = SendOptions()
+        options.fetch = fetch
+        options.body = .form([
+            "tags": .array([.string("a"), .string("b")]),
+            "attachments": .array([
+                .file(FileParam(filename: "a.txt", data: Data("A".utf8))),
+                .string("note")
+            ])
+        ])
+
+        _ = try await client.sendRaw(path: "/api/things", options: options)
+
+        let request = try #require(capture.last)
+        let parts = parseMultipartParts(of: request)
+        #expect(parts.filter { $0.name == "tags" }.map(\.value) == ["a", "b"])
+        let attachmentParts = parts.filter { $0.name == "attachments" }
+        #expect(attachmentParts.count == 2)
+        #expect(attachmentParts.first?.filename == "a.txt")
+    }
+
     @Test func afterSendErrorsAreWrapped() async throws {
         let client = PocketBase(baseURL: "http://127.0.0.1:8090")
         let fetch: CustomFetch = { request in (Data("{}".utf8), httpResponse(for: request)) }

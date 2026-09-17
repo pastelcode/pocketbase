@@ -120,6 +120,9 @@ public struct SendOptions: Sendable {
     }
 
     /// A single multipart form field value.
+    ///
+    /// Values can be nested through ``array(_:)``, which appends every element
+    /// under the same field name.
     public enum FormValue: Sendable {
         /// A plain text field.
         case string(String)
@@ -129,6 +132,14 @@ public struct SendOptions: Sendable {
         case files([FileParam])
         /// A JSON-encoded field value.
         case json(AnyCodable)
+        /// Multiple values appended under one field name.
+        ///
+        /// Multipart bodies emit one part per element (nested arrays are
+        /// flattened). Batch requests split the elements into JSON body values
+        /// and file fields: files are appended under a `+`-suffixed key when
+        /// the same field also carries regular values, mirroring the
+        /// JavaScript SDK.
+        case array([FormValue])
     }
 
     /// Creates a set of request options.
