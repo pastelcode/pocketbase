@@ -46,18 +46,16 @@ open class BaseAuthStore: @unchecked Sendable {
 
     /// Checks whether the store has a usable, unexpired token.
     ///
-    /// Mirrors the official Dart SDK's stricter check: the token must be a
-    /// well-formed three-segment JWT with a numeric `exp` claim in the future.
-    /// Tokens without an `exp` claim are considered invalid.
+    /// Equivalent to negating ``JWTUtils/isTokenExpired(_:expirationThreshold:)``:
+    /// the token must be a well-formed three-segment JWT with a numeric `exp`
+    /// claim in the future. Malformed tokens and tokens without an `exp` claim
+    /// are considered invalid.
     ///
     /// - Note: This is stricter than the JavaScript SDK, which treats a missing
-    ///   or falsy `exp` as "never expires". Failing closed is safer because
-    ///   neither implementation verifies the token signature.
+    ///   or falsy `exp` as "never expires". Failing closed is safer because the
+    ///   token signature is not verified.
     open var isValid: Bool {
-        guard let expiration = JWTUtils.getExpirationTimestamp(token) else {
-            return false
-        }
-        return expiration > Date().timeIntervalSince1970
+        return !JWTUtils.isTokenExpired(token)
     }
 
     /// Loosely checks whether the currently loaded store state is for superuser.

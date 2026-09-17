@@ -26,7 +26,7 @@ if pb.authStore.isValid {
 pb.authStore.clear()
 ```
 
-`isValid` requires a well-formed three-segment JWT with a numeric, unexpired `exp` claim (see ``JWTUtils/getExpirationTimestamp(_:)``). Tokens without an `exp` claim are treated as invalid — a stricter, safer check than the JavaScript SDK's.
+`isValid` requires a well-formed three-segment JWT with a numeric, unexpired `exp` claim (see ``JWTUtils/isTokenExpired(_:expirationThreshold:)``). Tokens without an `exp` claim, or with a malformed one, are treated as invalid — a stricter, safer check than the JavaScript SDK's.
 
 ## Persistence
 

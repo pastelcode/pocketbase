@@ -30,15 +30,19 @@ public struct JWTUtils: Sendable {
 
     /// Checks whether a JWT token is expired or not.
     ///
-    /// Matches the reference SDK's truth table:
+    /// The check fails closed. A token is considered expired when:
     ///
-    /// - A token with an empty payload (for example an invalid token string) is
-    ///   considered expired.
-    /// - A payload without `exp`, or with a falsy `exp` (`0`, `null`, `false`
-    ///   or an empty string), is considered valid.
-    /// - A numeric `exp` (including numeric strings) is valid when
-    ///   `exp - expirationThreshold` is in the future.
-    /// - Any other non-numeric `exp` value is considered expired.
+    /// - it is not a well-formed three-segment JWT,
+    /// - its payload is empty, or
+    /// - its `exp` claim is missing or non-numeric.
+    ///
+    /// A numeric `exp` (including numeric strings) is valid while
+    /// `exp - expirationThreshold` is in the future.
+    ///
+    /// - Note: This is stricter than the JavaScript SDK, which treats a missing
+    ///   or falsy `exp` as "never expires". Failing closed is safer because the
+    ///   token signature is not verified. ``BaseAuthStore/isValid`` applies the
+    ///   same rules.
     ///
     /// - Parameters:
     ///   - token: The JWT token to inspect.
@@ -46,34 +50,20 @@ public struct JWTUtils: Sendable {
     ///     comparison. Defaults to `0`.
     /// - Returns: `true` when the token is expired or malformed.
     public static func isTokenExpired(_ token: String, expirationThreshold: Double = 0) -> Bool {
-        let payload = getTokenPayload(token)
-        if payload.isEmpty {
+        guard let expiration = getExpirationTimestamp(token) else {
             return true
         }
-
-        guard let expVal = payload["exp"] else {
-            return false
-        }
-
-        // Falsy `exp` values are treated as "no expiration" by the reference SDK.
-        if isFalsy(expVal) {
-            return false
-        }
-
-        guard let exp = numericValue(expVal) else {
-            // Non-numeric values produce `NaN` comparisons in the reference SDK.
-            return true
-        }
-
-        return !(exp - expirationThreshold > Date().timeIntervalSince1970)
+        return !(expiration - expirationThreshold > Date().timeIntervalSince1970)
     }
 
     /// Returns the token's `exp` claim as a Unix timestamp.
     ///
-    /// Mirrors the official Dart SDK's stricter parsing: the token must be a
-    /// well-formed three-segment JWT and the claim must be a number (or a
-    /// numeric string). A missing or non-numeric `exp` returns `nil` instead of
-    /// being treated as "never expires".
+    /// The token must be a well-formed three-segment JWT and the claim must be
+    /// a number (or a numeric string). A missing or non-numeric `exp` returns
+    /// `nil` instead of being treated as "never expires".
+    ///
+    /// Used by ``isTokenExpired(_:expirationThreshold:)`` and
+    /// ``BaseAuthStore/isValid``.
     ///
     /// - Parameter token: The JWT token to inspect.
     /// - Returns: The expiration timestamp in seconds, or `nil` when it is not
@@ -96,44 +86,6 @@ public struct JWTUtils: Sendable {
         case .string(let s):
             return Double(s)
         default:
-            return nil
-        }
-    }
-
-    /// Returns whether the value is falsy in JavaScript (`0`, `null`, `false`
-    /// or an empty string).
-    private static func isFalsy(_ value: AnyCodable) -> Bool {
-        switch value.value {
-        case .null:
-            return true
-        case .int(let i):
-            return i == 0
-        case .double(let d):
-            return d == 0
-        case .bool(let b):
-            return !b
-        case .string(let s):
-            return s.isEmpty
-        case .date, .array, .dictionary:
-            return false
-        }
-    }
-
-    /// Returns the JavaScript numeric coercion of the value, or `nil` when it
-    /// would produce `NaN`.
-    private static func numericValue(_ value: AnyCodable) -> Double? {
-        switch value.value {
-        case .int(let i):
-            return Double(i)
-        case .double(let d):
-            return d
-        case .string(let s):
-            return Double(s)
-        case .bool(let b):
-            return b ? 1 : 0
-        case .null:
-            return 0
-        case .date, .array, .dictionary:
             return nil
         }
     }

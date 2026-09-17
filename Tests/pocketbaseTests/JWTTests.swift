@@ -23,9 +23,9 @@ struct JWTTests {
         let emptyPayloadToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.Et9HFtf9R3GEMA0IICOfFMVXY7kkTX1wr4qCyhIf58U"
         #expect(JWTUtils.isTokenExpired(emptyPayloadToken) == true)
 
-        // Token without exp param
+        // Token without exp param (fails closed)
         let noExpToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0ZXN0IjoxMjN9.da77dJt5jjPU43vaaCr6WeHEXrxzB37b0edfjwyD-2M"
-        #expect(JWTUtils.isTokenExpired(noExpToken) == false)
+        #expect(JWTUtils.isTokenExpired(noExpToken) == true)
 
         // Token with exp param in the past (exp: 1624788000)
         let pastToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0ZXN0IjoxMjMsImV4cCI6MTYyNDc4ODAwMH0.WOzXh8TQh6fBXJJlOvHktBuv7D8eSyrYx4_IBj2Deyo"
@@ -36,18 +36,20 @@ struct JWTTests {
         #expect(JWTUtils.isTokenExpired(futureToken) == false)
     }
 
-    @Test func testIsTokenExpiredEdgeCases() {
-        // Falsy exp values are treated as absent by the reference SDK (valid).
-        #expect(JWTUtils.isTokenExpired(dummyJWT(payload: ["exp": 0])) == false)
-        #expect(JWTUtils.isTokenExpired(dummyJWT(payload: ["exp": NSNull()])) == false)
-        #expect(JWTUtils.isTokenExpired(dummyJWT(payload: ["exp": ""])) == false)
-        #expect(JWTUtils.isTokenExpired(dummyJWT(payload: ["exp": false])) == false)
-
-        // Non-numeric truthy exp values produce NaN comparisons (expired).
+    @Test func testIsTokenExpiredFailsClosed() {
+        // Missing, falsy or non-numeric exp claims are treated as expired.
+        #expect(JWTUtils.isTokenExpired(dummyJWT(payload: ["exp": NSNull()])) == true)
+        #expect(JWTUtils.isTokenExpired(dummyJWT(payload: ["exp": 0])) == true)
+        #expect(JWTUtils.isTokenExpired(dummyJWT(payload: ["exp": ""])) == true)
+        #expect(JWTUtils.isTokenExpired(dummyJWT(payload: ["exp": false])) == true)
         #expect(JWTUtils.isTokenExpired(dummyJWT(payload: ["exp": "abc"])) == true)
         #expect(JWTUtils.isTokenExpired(dummyJWT(payload: ["exp": true])) == true)
 
-        // Numeric strings are coerced like in JavaScript (valid when in the future).
+        // Malformed tokens are expired.
+        #expect(JWTUtils.isTokenExpired("a.b") == true)
+        #expect(JWTUtils.isTokenExpired("a.b.c") == true)
+
+        // Numeric strings are accepted (valid while in the future).
         #expect(JWTUtils.isTokenExpired(dummyJWT(payload: ["exp": "9999999999"])) == false)
 
         // The threshold moves the expiration boundary.
