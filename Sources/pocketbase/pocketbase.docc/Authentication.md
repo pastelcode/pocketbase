@@ -83,7 +83,36 @@ res.headers.add(name: "Set-Cookie", value: setCookie)
 
 Native clients do not need cookies: the token lives in ``PocketBase/authStore`` and is sent as an `Authorization` header on every request, including the realtime SSE connection. Use cookies only for the browser/server handoff, preferably with `httpOnly` and `secure` so the token stays out of reach of client-side JavaScript.
 
-## OAuth2 and OTP
+## OAuth2
+
+### Interactive flow
+
+When the app can open a browser or web view, ``RecordService/authWithOAuth2(provider:urlCallback:scopes:createData:options:)`` runs the whole flow:
+
+```swift
+let auth: RecordAuthResponse<RecordModel> = try await pb.collection("users").authWithOAuth2(
+    provider: "google",
+    urlCallback: { url in
+        await UIApplication.shared.open(URL(string: url)!)
+    }
+)
+```
+
+The SDK subscribes to a one-off `@oauth2` realtime channel, passes the provider authorization URL to `urlCallback`, and completes once the provider redirects to `https://yourdomain.com/api/oauth2-redirect`. Configure that URL in the provider dashboard. The SDK never opens a browser itself, so `urlCallback` is where each platform plugs in:
+
+| Platform | Typical opener |
+| --- | --- |
+| SwiftUI | `openURL` from the environment |
+| iOS / tvOS | `UIApplication.shared.open(_:)` |
+| macOS | `NSWorkspace.shared.open(_:)` |
+| Android | an `Intent` with `Intent.ACTION_VIEW` (for example Chrome Custom Tabs) |
+| Linux / server | `xdg-open` or any registered URL handler |
+
+Pass `scopes` to replace the provider's default scopes, and `createData` to add fields when the flow creates a new auth record. Cancelling the surrounding task aborts the flow, closes the realtime connection and throws a ``ClientResponseError`` with ``ClientResponseError/isAbort`` set.
+
+### Manual code exchange
+
+If you already have an authorization code, for example from a custom deep link, exchange it yourself with ``RecordService/authWithOAuth2Code(provider:code:codeVerifier:redirectURL:createData:options:)``:
 
 ```swift
 let methods = try await pb.collection("users").listAuthMethods()
@@ -95,6 +124,8 @@ let auth: RecordAuthResponse<RecordModel> = try await pb.collection("users").aut
     redirectURL: "app://oauth2-redirect"
 )
 ```
+
+## OTP
 
 ```swift
 let otp = try await pb.collection("users").requestOTP(email: "user@example.com")

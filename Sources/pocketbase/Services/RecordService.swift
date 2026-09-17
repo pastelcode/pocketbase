@@ -18,6 +18,10 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
     /// The id or name of the collection this service targets.
     public let collectionIdOrName: String
 
+    /// Factory for the one-off realtime service used by the interactive
+    /// OAuth2 flow. Internal so tests can inject a fake transport.
+    var oauth2RealtimeServiceFactory: (@Sendable () -> RealtimeService)?
+
     /// Creates a record service for the given collection.
     ///
     /// - Parameters:
@@ -64,6 +68,13 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
     /// - Returns: A function that removes this subscription when called.
     /// - Throws: A ``ClientResponseError`` when `topic` is empty or the
     ///   subscription fails.
+    ///
+    /// - Note: Events whose payload cannot be decoded as
+    ///   ``RecordSubscription`` of `T` are ignored. Subscribe through
+    ///   ``RealtimeService`` directly to receive the raw payloads.
+    /// - Note: The reference SDK orders the parameters as
+    ///   `subscribe(topic, callback, options)`. In Swift, `options` precede the
+    ///   `callback` so callers can pass them alongside a trailing closure.
     open func subscribe<T: Codable & Sendable>(
         topic: String,
         options: SendOptions? = nil,
@@ -156,16 +167,37 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
     }
 
     // MARK: - Auth Handlers
-    private func processAuthResponse<T: Codable & Sendable>(_ responseData: RecordAuthResponse<RecordModel>) throws -> RecordAuthResponse<T> {
-        client.authStore.save(token: responseData.token, record: responseData.record)
+    /// Prepares a successful authentication response.
+    ///
+    /// The record is materialized through ``CrudService/decode(_:)`` (so
+    /// subclasses can customize it) and saved in ``PocketBase/authStore``.
+    /// A missing `token` or `record` defaults to `""` and `{}`, matching the
+    /// reference SDK.
+    private func processAuthResponse<T: Codable & Sendable>(_ responseData: [String: AnyCodable]) throws -> RecordAuthResponse<T> {
+        let token = responseData["token"]?.stringValue ?? ""
 
-        if let typedRecord = responseData.record as? T {
-            return RecordAuthResponse<T>(record: typedRecord, token: responseData.token, meta: responseData.meta)
-        } else {
-            let recData = try JSONEncoder().encode(responseData.record)
-            let decodedRecord = try JSONDecoder().decode(T.self, from: recData)
-            return RecordAuthResponse<T>(record: decodedRecord, token: responseData.token, meta: responseData.meta)
+        var recordValue = responseData["record"] ?? AnyCodable([String: AnyCodable]())
+        if case .null = recordValue.value {
+            recordValue = AnyCodable([String: AnyCodable]())
         }
+
+        let record: RecordModel = try decode(recordValue)
+        client.authStore.save(token: token, record: record)
+
+        let typedRecord: T
+        if let typed = record as? T {
+            typedRecord = typed
+        } else {
+            let data = try JSONEncoder().encode(record)
+            typedRecord = try JSONDecoder().decode(T.self, from: data)
+        }
+
+        var meta: [String: AnyCodable]?
+        if case .dictionary(let metaDict)? = responseData["meta"]?.value {
+            meta = metaDict
+        }
+
+        return RecordAuthResponse(record: typedRecord, token: token, meta: meta)
     }
 
     /// Returns the enabled authentication methods for the collection.
@@ -210,7 +242,7 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
             AutoRefresh.resetAutoRefresh(client)
         }
 
-        let respData: RecordAuthResponse<RecordModel> = try await client.send(path: "\(baseCollectionPath)/auth-with-password", options: opt)
+        let respData: [String: AnyCodable] = try await client.send(path: "\(baseCollectionPath)/auth-with-password", options: opt)
         let result: RecordAuthResponse<T> = try processAuthResponse(respData)
 
         if let threshold = autoRefreshThreshold, isSuperusers {
@@ -272,8 +304,125 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
         }
         opt.applyDefaultBody(.json(bodyDict))
 
-        let respData: RecordAuthResponse<RecordModel> = try await client.send(path: "\(baseCollectionPath)/auth-with-oauth2", options: opt)
+        let respData: [String: AnyCodable] = try await client.send(path: "\(baseCollectionPath)/auth-with-oauth2", options: opt)
         return try processAuthResponse(respData)
+    }
+
+    /// Authenticates as a record with an interactive OAuth2 flow.
+    ///
+    /// The flow discovers the providers with ``listAuthMethods(options:)``,
+    /// opens a one-off realtime subscription on the `@oauth2` topic, calls
+    /// `urlCallback` with the provider authorization URL and waits for the
+    /// provider to redirect to the server's `/api/oauth2-redirect` page, which
+    /// delivers the authorization code back over the realtime connection. The
+    /// code is then exchanged with
+    /// ``authWithOAuth2Code(provider:code:codeVerifier:redirectURL:createData:options:)``
+    /// and the token and record are saved in ``PocketBase/authStore``.
+    ///
+    /// The SDK never opens a browser itself; `urlCallback` receives the
+    /// authorization URL and is responsible for opening it:
+    ///
+    /// ```swift
+    /// let auth: RecordAuthResponse<RecordModel> = try await pb.collection("users").authWithOAuth2(
+    ///     provider: "google",
+    ///     urlCallback: { url in
+    ///         await UIApplication.shared.open(URL(string: url)!)
+    ///     }
+    /// )
+    /// ```
+    ///
+    /// - Important: Configure `https://yourdomain.com/api/oauth2-redirect` as
+    ///   the redirect URL in the provider dashboard. The one-off realtime
+    ///   connection is closed when the flow finishes or fails.
+    ///
+    /// - Parameters:
+    ///   - providerName: The name of the OAuth2 provider, e.g. `"google"`.
+    ///   - urlCallback: Called with the authorization URL to open in a browser
+    ///     or web view.
+    ///   - scopes: Custom scopes that replace the provider defaults.
+    ///   - createData: Extra fields used when creating a new auth record.
+    ///   - options: Additional request options forwarded to the code exchange.
+    /// - Returns: The authenticated record and token.
+    /// - Throws: A ``ClientResponseError`` when the provider is unknown, the
+    ///   realtime state does not match, the connection drops, the task is
+    ///   cancelled (``ClientResponseError/isAbort``), or the code exchange
+    ///   fails.
+    open func authWithOAuth2<T: Codable & Sendable>(
+        provider providerName: String,
+        urlCallback: @escaping @Sendable (String) async throws -> Void,
+        scopes: [String]? = nil,
+        createData: [String: AnyCodable]? = nil,
+        options: SendOptions? = nil
+    ) async throws -> RecordAuthResponse<T> {
+        let authMethods = try await listAuthMethods()
+        guard let provider = authMethods.oauth2.providers.first(where: { $0.name == providerName }) else {
+            throw ClientResponseError(message: "Missing or invalid provider \"\(providerName)\".")
+        }
+
+        let redirectURL = client.buildURL(path: "/api/oauth2-redirect")
+        let realtime = oauth2RealtimeServiceFactory?() ?? RealtimeService(client)
+        let inbox = OAuth2EventInbox()
+
+        // A dropped connection while the flow is active can never complete.
+        realtime.onDisconnect = { activeSubscriptions in
+            guard !activeSubscriptions.isEmpty else { return }
+            inbox.fail(ClientResponseError(message: "realtime connection interrupted"))
+        }
+
+        do {
+            _ = try await realtime.subscribe(topic: "@oauth2") { data in
+                let currentState = realtime.clientId
+                let state = data["state"] as? String ?? ""
+                let code = data["code"] as? String ?? ""
+                let oauthError = data["error"] as? String ?? ""
+
+                guard !state.isEmpty, state == currentState else {
+                    inbox.fail(ClientResponseError(message: "State parameters don't match."))
+                    return
+                }
+
+                guard oauthError.isEmpty, !code.isEmpty else {
+                    let details = oauthError.isEmpty ? "" : ": \(oauthError)"
+                    inbox.fail(ClientResponseError(message: "OAuth2 redirect error or missing code\(details)"))
+                    return
+                }
+
+                inbox.succeed(code)
+            }
+        } catch {
+            await cleanupOAuth2(realtime)
+            throw error
+        }
+
+        do {
+            let authURL = buildOAuth2AuthURL(
+                provider: provider,
+                redirectURL: redirectURL,
+                state: realtime.clientId,
+                scopes: scopes
+            )
+            try await urlCallback(authURL)
+
+            let code = try await withTaskCancellationHandler {
+                try await inbox.wait()
+            } onCancel: {
+                inbox.fail(ClientResponseError(isAbort: true, message: "manually cancelled"))
+            }
+
+            let result: RecordAuthResponse<T> = try await authWithOAuth2Code(
+                provider: provider.name,
+                code: code,
+                codeVerifier: provider.codeVerifier,
+                redirectURL: redirectURL,
+                createData: createData,
+                options: options
+            )
+            await cleanupOAuth2(realtime)
+            return result
+        } catch {
+            await cleanupOAuth2(realtime)
+            throw error
+        }
     }
 
     /// Refreshes the current authentication and returns the updated record.
@@ -286,7 +435,7 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
     open func authRefresh<T: Codable & Sendable>(options: SendOptions? = nil) async throws -> RecordAuthResponse<T> {
         var opt = options ?? SendOptions()
         opt.applyDefaultMethod("POST")
-        let respData: RecordAuthResponse<RecordModel> = try await client.send(path: "\(baseCollectionPath)/auth-refresh", options: opt)
+        let respData: [String: AnyCodable] = try await client.send(path: "\(baseCollectionPath)/auth-refresh", options: opt)
         return try processAuthResponse(respData)
     }
 
@@ -366,7 +515,8 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
         let payload = JWTUtils.getTokenPayload(verificationToken)
         if var model = client.authStore.record,
            model.id == payload["id"]?.value.string,
-           model.collectionId == payload["collectionId"]?.value.string {
+           model.collectionId == payload["collectionId"]?.value.string,
+           model.rawFields["verified"]?.boolValue != true {
             model.rawFields["verified"] = AnyCodable(true)
             client.authStore.save(token: client.authStore.token, record: model)
         }
@@ -487,7 +637,7 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
             "otpId": AnyCodable(otpId),
             "password": AnyCodable(password)
         ]))
-        let respData: RecordAuthResponse<RecordModel> = try await client.send(path: "\(baseCollectionPath)/auth-with-otp", options: opt)
+        let respData: [String: AnyCodable] = try await client.send(path: "\(baseCollectionPath)/auth-with-otp", options: opt)
         return try processAuthResponse(respData)
     }
 
@@ -517,5 +667,119 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
 
         newClient.authStore.save(token: authData.token, record: authData.record)
         return newClient
+    }
+
+    // MARK: - OAuth2 Flow Helpers
+    /// Closes the one-off realtime connection used by the interactive OAuth2
+    /// flow.
+    private func cleanupOAuth2(_ realtime: RealtimeService) async {
+        realtime.onDisconnect = nil
+        try? await realtime.unsubscribe()
+    }
+
+    /// Builds the provider authorization URL for the one-off OAuth2 flow.
+    private func buildOAuth2AuthURL(provider: AuthProviderInfo, redirectURL: String, state: String, scopes: [String]?) -> String {
+        var replacements: [String: String?] = ["state": state]
+        if let scopes = scopes, !scopes.isEmpty {
+            replacements["scope"] = scopes.joined(separator: " ")
+        }
+        return replaceQueryParams(provider.authURL + redirectURL, replacements: replacements)
+    }
+
+    /// Replaces (or removes, when the value is `nil`) query parameters in a
+    /// URL, mirroring the reference SDK's `_replaceQueryParams` helper. This
+    /// keeps the provider's own parameters intact and re-encodes every value.
+    private func replaceQueryParams(_ url: String, replacements: [String: String?]) -> String {
+        var urlPath = url
+        var query = ""
+
+        if let queryIndex = url.firstIndex(of: "?") {
+            urlPath = String(url[..<queryIndex])
+            query = String(url[url.index(after: queryIndex)...])
+        }
+
+        var parsedParams: [(key: String, value: String)] = []
+        for param in query.split(separator: "&", omittingEmptySubsequences: true) {
+            let pair = param.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            let rawKey = String(pair[0]).replacingOccurrences(of: "+", with: " ")
+            let rawValue = pair.count > 1 ? String(pair[1]).replacingOccurrences(of: "+", with: " ") : ""
+            guard let key = rawKey.removingPercentEncoding,
+                  let value = rawValue.removingPercentEncoding else {
+                continue
+            }
+
+            if let index = parsedParams.firstIndex(where: { $0.key == key }) {
+                parsedParams[index].value = value
+            } else {
+                parsedParams.append((key, value))
+            }
+        }
+
+        for (key, value) in replacements {
+            if let index = parsedParams.firstIndex(where: { $0.key == key }) {
+                if let value = value {
+                    parsedParams[index].value = value
+                } else {
+                    parsedParams.remove(at: index)
+                }
+            } else if let value = value {
+                parsedParams.append((key, value))
+            }
+        }
+
+        let rebuilt = parsedParams
+            .map { "\($0.key.encodeURIComponent())=\($0.value.encodeURIComponent())" }
+            .joined(separator: "&")
+
+        return rebuilt.isEmpty ? urlPath : "\(urlPath)?\(rebuilt)"
+    }
+}
+
+/// A single-shot, thread-safe handoff of the OAuth2 authorization code (or
+/// error) from the realtime callback to the awaiting flow.
+private final class OAuth2EventInbox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pendingResult: Result<String, Error>?
+    private var continuation: CheckedContinuation<String, Error>?
+    private var isCompleted = false
+
+    func succeed(_ code: String) {
+        complete(with: .success(code))
+    }
+
+    func fail(_ error: Error) {
+        complete(with: .failure(error))
+    }
+
+    func wait() async throws -> String {
+        return try await withCheckedThrowingContinuation { continuation in
+            lock.lock()
+            if let result = pendingResult {
+                pendingResult = nil
+                lock.unlock()
+                continuation.resume(with: result)
+            } else {
+                self.continuation = continuation
+                lock.unlock()
+            }
+        }
+    }
+
+    private func complete(with result: Result<String, Error>) {
+        lock.lock()
+        guard !isCompleted else {
+            lock.unlock()
+            return
+        }
+        isCompleted = true
+
+        if let continuation = continuation {
+            self.continuation = nil
+            lock.unlock()
+            continuation.resume(with: result)
+        } else {
+            pendingResult = result
+            lock.unlock()
+        }
     }
 }
