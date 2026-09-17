@@ -37,6 +37,7 @@ The client exposes one service per PocketBase API group: ``PocketBase/collection
 
 ### Records and collections
 
+- <doc:DataModels>
 - ``RecordService``
 - ``CrudService``
 - ``CollectionService``

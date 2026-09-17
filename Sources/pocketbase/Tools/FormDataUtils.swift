@@ -6,9 +6,26 @@ import Foundation
 /// payload separated by ``boundary`` and exposes the matching `Content-Type`
 /// value in ``contentTypeHeader``.
 ///
+/// The encoding mirrors the reference SDK's
+/// `convertToFormDataIfNeeded`:
+///
+/// - ``SendOptions/FormValue/string(_:)`` and files are appended under their
+///   field name.
+/// - ``SendOptions/FormValue/json(_:)`` values are wrapped as
+///   `{"<field>": <value>}` and appended under the reserved `@jsonPayload`
+///   field, so the server merges them without applying its implicit string
+///   inference.
+/// - ``SendOptions/FormValue/jsonPayload(_:)`` values are appended under
+///   `@jsonPayload` verbatim.
+/// - ``SendOptions/FormValue/array(_:)`` values emit one part per element.
+///
+/// Field names and filenames are escaped the way browsers do it: carriage
+/// returns, line feeds and double quotes become `%0D`, `%0A` and `%22`.
+///
 /// ```swift
 /// let formData = MultipartFormData(fields: [
 ///     "title": .string("Hello"),
+///     "meta": .json(AnyCodable(["tags": ["a", "b"]])),
 ///     "avatar": .file(FileParam(filename: "avatar.png", mimeType: "image/png", data: pngData))
 /// ])
 /// ```
@@ -21,10 +38,6 @@ public struct MultipartFormData: Sendable {
     public let contentTypeHeader: String
 
     /// Encodes the given form fields into a multipart body.
-    ///
-    /// String and JSON values are written as plain parts, while files include
-    /// their filename and MIME type. ``SendOptions/FormValue/array(_:)`` values
-    /// emit one part per element under the same field name.
     ///
     /// - Parameters:
     ///   - fields: A dictionary of form field names to
@@ -57,11 +70,10 @@ public struct MultipartFormData: Sendable {
             data.append(textPart(named: key, value: str, boundary: boundary))
 
         case .json(let anyCodable):
-            let jsonEncoder = JSONEncoder()
-            if let encodedData = try? jsonEncoder.encode(anyCodable),
-               let jsonString = String(data: encodedData, encoding: .utf8) {
-                data.append(textPart(named: key, value: jsonString, boundary: boundary))
-            }
+            data.append(jsonPayloadPart(wrapping: AnyCodable([key: anyCodable]), boundary: boundary))
+
+        case .jsonPayload(let anyCodable):
+            data.append(jsonPayloadPart(wrapping: anyCodable, boundary: boundary))
 
         case .file(let fileParam):
             data.append(filePart(named: key, file: fileParam, boundary: boundary))
@@ -78,11 +90,20 @@ public struct MultipartFormData: Sendable {
         }
     }
 
+    /// Encodes a part for the reserved `@jsonPayload` field.
+    private static func jsonPayloadPart(wrapping value: AnyCodable, boundary: String) -> Data {
+        guard let encodedData = try? JSONEncoder().encode(value),
+              let jsonString = String(data: encodedData, encoding: .utf8) else {
+            return Data()
+        }
+        return textPart(named: "@jsonPayload", value: jsonString, boundary: boundary)
+    }
+
     /// Encodes a plain text part.
     private static func textPart(named key: String, value: String, boundary: String) -> Data {
         var data = Data()
         data.append("--\(boundary)\r\n".data(using: .utf8)!)
-        data.append("Content-Disposition: form-data; name=\"\(key)\"\r\n\r\n".data(using: .utf8)!)
+        data.append("Content-Disposition: form-data; name=\"\(escape(key))\"\r\n\r\n".data(using: .utf8)!)
         data.append("\(value)\r\n".data(using: .utf8)!)
         return data
     }
@@ -91,10 +112,18 @@ public struct MultipartFormData: Sendable {
     private static func filePart(named key: String, file fileParam: FileParam, boundary: String) -> Data {
         var data = Data()
         data.append("--\(boundary)\r\n".data(using: .utf8)!)
-        data.append("Content-Disposition: form-data; name=\"\(key)\"; filename=\"\(fileParam.filename)\"\r\n".data(using: .utf8)!)
+        data.append("Content-Disposition: form-data; name=\"\(escape(key))\"; filename=\"\(escape(fileParam.filename))\"\r\n".data(using: .utf8)!)
         data.append("Content-Type: \(fileParam.mimeType)\r\n\r\n".data(using: .utf8)!)
         data.append(fileParam.data)
         data.append("\r\n".data(using: .utf8)!)
         return data
+    }
+
+    /// Escapes a name or filename like browser `FormData` implementations do.
+    private static func escape(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\r", with: "%0D")
+            .replacingOccurrences(of: "\n", with: "%0A")
+            .replacingOccurrences(of: "\"", with: "%22")
     }
 }

@@ -129,7 +129,7 @@ open class BatchService: BaseService, @unchecked Sendable {
         }
 
         let payloadDict: [String: AnyCodable] = ["requests": AnyCodable(jsonData)]
-        formFields["@jsonPayload"] = .json(AnyCodable(payloadDict))
+        formFields["@jsonPayload"] = .jsonPayload(AnyCodable(payloadDict))
 
         let multipart = MultipartFormData(fields: formFields)
 
@@ -316,6 +316,12 @@ open class SubBatchService: @unchecked Sendable {
             jsonBody[key] = AnyCodable(s)
         case .json(let j):
             jsonBody[key] = j
+        case .jsonPayload(let j):
+            if let dict = j.dictionaryValue {
+                for (payloadKey, payloadValue) in dict {
+                    jsonBody[payloadKey] = payloadValue
+                }
+            }
         case .file(let f):
             filesBody[key, default: []].append(f)
         case .files(let fs):
@@ -349,6 +355,8 @@ open class SubBatchService: @unchecked Sendable {
             case .string(let s):
                 regulars.append(AnyCodable(s))
             case .json(let j):
+                regulars.append(j)
+            case .jsonPayload(let j):
                 regulars.append(j)
             case .file(let f):
                 files.append(f)

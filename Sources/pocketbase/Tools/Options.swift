@@ -121,21 +121,46 @@ public struct SendOptions: Sendable {
 
     /// A single multipart form field value.
     ///
-    /// Values can be nested through ``array(_:)``, which appends every element
-    /// under the same field name.
+    /// Multipart bodies are encoded by ``MultipartFormData``. Values can be
+    /// nested through ``array(_:)``, which appends every element under the same
+    /// field name, and structured values are routed through the reserved
+    /// `@jsonPayload` field so the server does not apply its implicit
+    /// string inference to them.
     public enum FormValue: Sendable {
         /// A plain text field.
+        ///
+        /// The text is sent as-is: no `true`/`false`/number inference is
+        /// applied on the client. The server applies its own inference rules
+        /// when parsing multipart fields.
         case string(String)
         /// A single file field.
         case file(FileParam)
         /// A multiple-file field.
         case files([FileParam])
-        /// A JSON-encoded field value.
+        /// A structured JSON value.
+        ///
+        /// Multipart bodies append `{"<field>": <value>}` under the reserved
+        /// `@jsonPayload` field, matching the reference SDK's
+        /// `convertToFormDataIfNeeded`.
+        ///
+        /// Batch bodies embed the value under its own field name in the JSON
+        /// payload.
         case json(AnyCodable)
+        /// A raw payload for the reserved `@jsonPayload` field.
+        ///
+        /// Unlike ``json(_:)`` the value is not wrapped under the field name;
+        /// the caller provides the full payload to merge. This matches bodies
+        /// where several fields were collected into one `@jsonPayload` entry
+        /// and is used internally by ``BatchService``.
+        case jsonPayload(AnyCodable)
         /// Multiple values appended under one field name.
         ///
         /// Multipart bodies emit one part per element (nested arrays are
-        /// flattened). Batch requests split the elements into JSON body values
+        /// flattened), the branch the reference SDK uses for arrays that
+        /// contain at least one file. Arrays without files are sent as
+        /// ``json(_:)`` by the reference SDK.
+        ///
+        /// Batch requests split the elements into JSON body values
         /// and file fields: files are appended under a `+`-suffixed key when
         /// the same field also carries regular values, mirroring the
         /// JavaScript SDK.

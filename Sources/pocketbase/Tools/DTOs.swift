@@ -2,6 +2,10 @@ import Foundation
 
 // MARK: - ListResult
 /// A paginated list response returned by list endpoints.
+///
+/// The initializer provides local defaults (`page` 1, `perPage` 30, zeroed
+/// totals and an empty `items` array). Values decoded from a response always
+/// keep the server values.
 public struct ListResult<T: Codable & Sendable>: Codable, Sendable {
     /// The requested page number, starting at 1.
     public var page: Int
@@ -23,6 +27,9 @@ public struct ListResult<T: Codable & Sendable>: Codable, Sendable {
         self.items = items
     }
 }
+
+/// Equatable conformance for list results with equatable items.
+extension ListResult: Equatable where T: Equatable {}
 
 // MARK: - BaseModel Protocol
 /// Common interface for models that are identified by an `id`.
@@ -431,17 +438,55 @@ public struct OAuth2Config: Codable, Equatable, Sendable {
     }
 }
 
+/// The kind of a collection.
+///
+/// Use it instead of comparing ``CollectionModel/type`` against raw strings.
+public enum CollectionType: String, Codable, CaseIterable, Sendable {
+    /// A regular collection with user-defined fields.
+    case base
+    /// A read-only collection backed by a view query.
+    case view
+    /// A collection with the built-in auth fields and endpoints.
+    case auth
+}
+
 /// A collection definition.
 ///
-/// Flattens the base, view and auth collection models of the reference SDK;
-/// the ``type`` property determines which optional fields are populated.
+/// This SDK keeps one flattened model instead of the reference SDK's
+/// `BaseCollectionModel` / `ViewCollectionModel` / `AuthCollectionModel`
+/// union: `CollectionService` returns `CollectionModel` values directly and
+/// Swift's `Codable` has no structural unions. Switch on ``collectionType``
+/// to handle each kind; the kind-specific properties are `nil` for the other
+/// kinds, and unknown future types map to `nil` instead of failing to decode.
+///
+/// ```swift
+/// let collection = try await pb.collections.get("posts")
+///
+/// switch collection.collectionType {
+/// case .auth:
+///     print(collection.oauth2?.providers.count ?? 0)
+/// case .view:
+///     print(collection.viewQuery ?? "")
+/// case .base, nil:
+///     break
+/// }
+/// ```
 public struct CollectionModel: BaseModel, Equatable, Sendable {
     /// Unique identifier of the collection.
     public var id: String
     /// Name of the collection.
     public var name: String
     /// Collection type: `base`, `view` or `auth`.
-    public var type: String // "base", "view", "auth"
+    ///
+    /// Prefer ``collectionType`` for typed comparisons.
+    public var type: String
+    /// The collection type as a ``CollectionType`` value.
+    ///
+    /// `nil` when the server returns a type this SDK version does not know,
+    /// which keeps decoding forward compatible.
+    public var collectionType: CollectionType? {
+        CollectionType(rawValue: type)
+    }
     /// Field definitions of the collection.
     public var fields: [CollectionField]
     /// Index definitions as raw SQL strings.
@@ -627,6 +672,10 @@ public struct SQLResult: Codable, Equatable, Sendable {
     /// Columns returned by the query.
     public var columns: [SQLColumn]
     /// Rows returned by the query, aligned with ``columns``.
+    ///
+    /// Cells are strings or `nil`, like the reference SDK's
+    /// `Array<Array<string | null>>`: the server scans every cell into a
+    /// nullable string, regardless of the underlying column type.
     public var rows: [[String?]]
 
     /// Creates an SQL result with the given values.
@@ -671,6 +720,9 @@ public struct RecordAuthResponse<T: Codable & Sendable>: Codable, Sendable {
         self.meta = meta
     }
 }
+
+/// Equatable conformance for auth responses with equatable records.
+extension RecordAuthResponse: Equatable where T: Equatable {}
 
 /// Auth provider details returned by the auth methods endpoint.
 public struct AuthProviderInfo: Codable, Equatable, Sendable {
@@ -803,6 +855,9 @@ public struct RecordSubscription<T: Codable & Sendable>: Codable, Sendable {
         self.record = record
     }
 }
+
+/// Equatable conformance for subscription events with equatable records.
+extension RecordSubscription: Equatable where T: Equatable {}
 
 /// Response returned when an OTP is requested.
 public struct OTPResponse: Codable, Equatable, Sendable {
