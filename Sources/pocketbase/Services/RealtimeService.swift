@@ -10,9 +10,13 @@ public typealias RealtimeCallback = @Sendable ([String: Any]) -> Void
 /// The service connects to `/api/realtime`, waits for the server's
 /// `PB_CONNECT` handshake to obtain a client id, then syncs the active topic
 /// subscriptions over `POST /api/realtime`. If the stream drops, it
-/// reconnects using a predefined backoff (200ms up to 2s, with jitter),
-/// treating a server-provided SSE `retry:` value as the minimum delay. Active
-/// subscriptions are resubmitted automatically after every reconnect.
+/// reconnects using a predefined backoff (200ms up to 2s); jitter is applied
+/// only to this client-defined backoff, while a server-provided SSE `retry:`
+/// value acts as a floor and disables jitter. Active subscriptions are
+/// resubmitted automatically after every reconnect.
+///
+/// - Note: Honoring `retry:` for the custom reconnect intentionally goes
+///   beyond the JS SDK, which ignores it.
 ///
 /// ```swift
 /// let unsubscribe = try await client.realtime.subscribe(topic: "posts/*") { event in
@@ -24,7 +28,9 @@ open class RealtimeService: BaseService, @unchecked Sendable {
     /// The client id assigned by the server during the `PB_CONNECT` handshake.
     ///
     /// Empty while disconnected or before the handshake completes.
-    public private(set) var clientId: String = ""
+    public var clientId: String {
+        withLock { _clientId }
+    }
     /// Called when an established connection drops.
     ///
     /// The argument contains the topics that were active at the time.
@@ -34,9 +40,11 @@ open class RealtimeService: BaseService, @unchecked Sendable {
     var makeTransport: () -> SSETransport = { URLSessionSSETransport() }
 
     private let lock = NSRecursiveLock()
+    private var _clientId: String = ""
     private var subscriptions: [String: [UUID: RealtimeCallback]] = [:]
     private var lastSentSubscriptions: [String] = []
     private var transport: SSETransport?
+    private var transportGeneration = 0
     private var isTransportActive = false
     private var pendingConnects: [CheckedContinuation<Void, Error>] = []
     private var connectTimeoutTask: Task<Void, Never>?
@@ -49,13 +57,26 @@ open class RealtimeService: BaseService, @unchecked Sendable {
     private var pendingSubmits: [CheckedContinuation<Void, Error>] = []
     private var isProcessingSubmits = false
 
-    private let maxConnectTimeout: Double = 15
+    var maxConnectTimeout: Double = 15
     static let predefinedReconnectIntervals: [Double] = [200, 300, 500, 1000, 1200, 1500, 2000]
 
     private func withLock<T>(_ block: () -> T) -> T {
         lock.lock()
         defer { lock.unlock() }
         return block()
+    }
+
+    private func isCurrentTransport(_ candidate: SSETransport, generation: Int) -> Bool {
+        withLock { transport === candidate && transportGeneration == generation }
+    }
+
+    /// Aborts the in-flight subscription POST belonging to `clientId`.
+    ///
+    /// Must be called after releasing `lock`: `PocketBase.cancelRequest` takes
+    /// the client's own lock and the service lock is not re-entrant across it.
+    private func cancelSubscriptionRequest(for clientId: String) {
+        guard !clientId.isEmpty else { return }
+        client.cancelRequest("realtime_\(clientId)")
     }
 
     /// Computes the reconnect delay. A server-provided SSE `retry:` value acts
@@ -78,7 +99,7 @@ open class RealtimeService: BaseService, @unchecked Sendable {
     /// Whether the transport is connected and the `PB_CONNECT` handshake completed.
     open var isConnected: Bool {
         return withLock {
-            !clientId.isEmpty && isTransportActive && pendingConnects.isEmpty
+            !_clientId.isEmpty && isTransportActive && pendingConnects.isEmpty
         }
     }
 
@@ -86,9 +107,9 @@ open class RealtimeService: BaseService, @unchecked Sendable {
     ///
     /// The topic can be an exact topic (for example `posts/abc123`), a
     /// wildcard topic (for example `posts/*`), or the special `PB_CONNECT`
-    /// topic. When `options` are supplied, their query and headers are
-    /// serialized into the topic key so subscriptions with different options
-    /// remain independent.
+    /// topic. When `options` are supplied, their typed shorthands, query, and
+    /// headers are serialized into the topic key so subscriptions with
+    /// different options remain independent.
     ///
     /// ```swift
     /// let unsubscribe = try await client.realtime.subscribe(topic: "posts/*") { event in
@@ -97,7 +118,8 @@ open class RealtimeService: BaseService, @unchecked Sendable {
     /// ```
     ///
     /// - Parameter topic: The topic to listen to.
-    /// - Parameter options: Extra query parameters and headers for the subscription.
+    /// - Parameter options: Extra query parameters, headers, and typed
+    ///   shorthands (folded into `query`) for the subscription.
     /// - Parameter callback: Invoked with the JSON payload of every matching event.
     /// - Returns: A closure that removes this subscription when invoked.
     /// - Throws: ``ClientResponseError`` when the topic is empty or the
@@ -112,15 +134,24 @@ open class RealtimeService: BaseService, @unchecked Sendable {
         }
 
         var key = topic
-        if let opt = options {
-            let jsonDict: [String: AnyCodable] = [
-                "query": AnyCodable(opt.query),
-                "headers": AnyCodable(opt.headers)
-            ]
-            if let data = try? JSONEncoder().encode(jsonDict),
-               let jsonStr = String(data: data, encoding: .utf8) {
-                key += (key.contains("?") ? "&" : "?") + "options=" + jsonStr.encodeURIComponent()
+        if var opt = options {
+            opt.applyShorthandQuery()
+
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+
+            var jsonStr = "{}"
+            if let data = try? encoder.encode(opt.query) {
+                let query = String(data: data, encoding: .utf8) ?? "{}"
+                jsonStr = "{\"query\":\(query)"
+                if !opt.headers.isEmpty, let headersData = try? encoder.encode(opt.headers) {
+                    let headers = String(data: headersData, encoding: .utf8) ?? "{}"
+                    jsonStr += ",\"headers\":\(headers)"
+                }
+                jsonStr += "}"
             }
+
+            key += (key.contains("?") ? "&" : "?") + "options=" + jsonStr.encodeURIComponent()
         }
 
         let topicKey = key
@@ -130,7 +161,7 @@ open class RealtimeService: BaseService, @unchecked Sendable {
                 subscriptions[topicKey] = [:]
             }
             subscriptions[topicKey]?[callbackId] = callback
-            return clientId.isEmpty || !isTransportActive
+            return _clientId.isEmpty || !isTransportActive
         }
 
         if needsConnect {
@@ -148,6 +179,13 @@ open class RealtimeService: BaseService, @unchecked Sendable {
     private func hasActiveSubscriptions() -> Bool {
         return withLock {
             subscriptions.contains { !$0.value.isEmpty }
+        }
+    }
+
+    private func hasUnsentSubscriptions() -> Bool {
+        withLock {
+            let current = Set(subscriptions.filter { !$0.value.isEmpty }.map { $0.key })
+            return current != Set(lastSentSubscriptions)
         }
     }
 
@@ -205,9 +243,10 @@ open class RealtimeService: BaseService, @unchecked Sendable {
     /// previously established, `onDisconnect` is invoked with the active
     /// topics. Registered subscriptions are kept.
     open func disconnect() {
-        let (continuations, active, shouldNotify) = withLock {
-            () -> ([CheckedContinuation<Void, Error>], [String], Bool) in
-            let shouldNotify = !clientId.isEmpty
+        let (outgoingClientId, continuations, active, shouldNotify) = withLock {
+            () -> (String, [CheckedContinuation<Void, Error>], [String], Bool) in
+            let outgoingClientId = _clientId
+            let shouldNotify = !_clientId.isEmpty
             let active = Array(subscriptions.keys)
 
             connectTimeoutTask?.cancel()
@@ -219,13 +258,15 @@ open class RealtimeService: BaseService, @unchecked Sendable {
             transport?.cancel()
             transport = nil
             isTransportActive = false
-            clientId = ""
+            _clientId = ""
             lastSentSubscriptions = []
 
             let pending = pendingConnects
             pendingConnects.removeAll()
-            return (pending, active, shouldNotify)
+            return (outgoingClientId, pending, active, shouldNotify)
         }
+
+        cancelSubscriptionRequest(for: outgoingClientId)
 
         // Resume pending connects without throwing, matching the JS SDK: an
         // unsubscribe before the initial connect should not surface an error.
@@ -253,7 +294,7 @@ open class RealtimeService: BaseService, @unchecked Sendable {
     private func ensureConnected() async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let action = withLock { () -> Int in
-                if !clientId.isEmpty && isTransportActive {
+                if !_clientId.isEmpty && isTransportActive && pendingConnects.isEmpty {
                     return 0 // already connected
                 }
                 pendingConnects.append(continuation)
@@ -286,7 +327,7 @@ open class RealtimeService: BaseService, @unchecked Sendable {
             headers["Accept-Language"] = client.lang
         }
 
-        let activeTransport = withLock { () -> SSETransport in
+        let (activeTransport, generation) = withLock { () -> (SSETransport, Int) in
             transport?.cancel()
             reconnectTask?.cancel()
             reconnectTask = nil
@@ -294,17 +335,20 @@ open class RealtimeService: BaseService, @unchecked Sendable {
             let newTransport = makeTransport()
             transport = newTransport
             isTransportActive = true
-            return newTransport
+            transportGeneration += 1
+            return (newTransport, transportGeneration)
         }
 
         activeTransport.onEvent = { [weak self] event in
-            self?.handle(event: event)
+            guard let self = self, self.isCurrentTransport(activeTransport, generation: generation) else { return }
+            self.handle(event: event)
         }
         activeTransport.onDisconnect = { [weak self] error in
-            self?.handleTransportDisconnect(error)
+            guard let self = self, self.isCurrentTransport(activeTransport, generation: generation) else { return }
+            self.handleTransportDisconnect(error)
         }
 
-        let timeout = UInt64(maxConnectTimeout * 1_000_000_000)
+        let timeout = UInt64((maxConnectTimeout * 1_000_000_000).rounded())
         withLock {
             connectTimeoutTask?.cancel()
             connectTimeoutTask = Task { [weak self] in
@@ -319,7 +363,7 @@ open class RealtimeService: BaseService, @unchecked Sendable {
 
     private func reconnectIfNeeded() {
         let shouldStart = withLock { () -> Bool in
-            guard clientId.isEmpty, !isTransportActive else { return false }
+            guard _clientId.isEmpty, !isTransportActive else { return false }
             return subscriptions.contains { !$0.value.isEmpty }
         }
         if shouldStart {
@@ -359,13 +403,10 @@ open class RealtimeService: BaseService, @unchecked Sendable {
 
         if event.event == "PB_CONNECT" {
             withLock {
-                clientId = event.id
+                _clientId = event.id
                 lastSentSubscriptions = []
-                reconnectAttempts = 0
                 reconnectTask?.cancel()
                 reconnectTask = nil
-                connectTimeoutTask?.cancel()
-                connectTimeoutTask = nil
             }
 
             // Retain the owning client for the lifetime of this task: `client`
@@ -378,21 +419,21 @@ open class RealtimeService: BaseService, @unchecked Sendable {
 
                 do {
                     try await self.submitSubscriptions()
+
+                    var maxResubmit = 3
+                    while self.hasUnsentSubscriptions() && maxResubmit > 0 {
+                        maxResubmit -= 1
+                        try await self.submitSubscriptions()
+                    }
                 } catch {
-                    let continuations = self.withLock { () -> [CheckedContinuation<Void, Error>] in
-                        self.clientId = ""
-                        self.lastSentSubscriptions = []
-                        let pending = self.pendingConnects
-                        self.pendingConnects.removeAll()
-                        return pending
-                    }
-                    for continuation in continuations {
-                        continuation.resume(throwing: error)
-                    }
+                    self.connectErrorHandler(error)
                     return
                 }
 
                 let continuations = self.withLock { () -> [CheckedContinuation<Void, Error>] in
+                    self.reconnectAttempts = 0
+                    self.connectTimeoutTask?.cancel()
+                    self.connectTimeoutTask = nil
                     let pending = self.pendingConnects
                     self.pendingConnects.removeAll()
                     return pending
@@ -402,6 +443,10 @@ open class RealtimeService: BaseService, @unchecked Sendable {
                 }
 
                 self.dispatch(event: event.event, data: event.data)
+
+                if self.hasUnsentSubscriptions() {
+                    try? await self.submitSubscriptions()
+                }
             }
             return
         }
@@ -427,26 +472,29 @@ open class RealtimeService: BaseService, @unchecked Sendable {
     }
 
     private func handleTransportDisconnect(_ error: Error?) {
-        let (wasConnected, shouldReconnect, continuations) = withLock {
-            () -> (Bool, Bool, [CheckedContinuation<Void, Error>]) in
-            let wasConnected = !clientId.isEmpty
+        let (outgoingClientId, wasConnected, shouldReconnect, continuations) = withLock {
+            () -> (String, Bool, Bool, [CheckedContinuation<Void, Error>]) in
+            let outgoingClientId = _clientId
+            let wasConnected = !_clientId.isEmpty
             let wasReconnecting = reconnectAttempts > 0
 
             isTransportActive = false
             transport = nil
             connectTimeoutTask?.cancel()
             connectTimeoutTask = nil
-            clientId = ""
+            _clientId = ""
             lastSentSubscriptions = []
 
             if wasConnected || wasReconnecting {
-                return (wasConnected, true, [])
+                return (outgoingClientId, wasConnected, true, [])
             }
 
             let pending = pendingConnects
             pendingConnects.removeAll()
-            return (false, false, pending)
+            return (outgoingClientId, false, false, pending)
         }
+
+        cancelSubscriptionRequest(for: outgoingClientId)
 
         if shouldReconnect {
             if wasConnected {
@@ -462,25 +510,28 @@ open class RealtimeService: BaseService, @unchecked Sendable {
     }
 
     private func handleConnectTimeout() {
-        let (wasConnected, shouldReconnect, continuations) = withLock {
-            () -> (Bool, Bool, [CheckedContinuation<Void, Error>]) in
-            let wasConnected = !clientId.isEmpty
+        let (outgoingClientId, wasConnected, shouldReconnect, continuations) = withLock {
+            () -> (String, Bool, Bool, [CheckedContinuation<Void, Error>]) in
+            let outgoingClientId = _clientId
+            let wasConnected = !_clientId.isEmpty
             let wasReconnecting = reconnectAttempts > 0
 
             transport?.cancel()
             transport = nil
             isTransportActive = false
-            clientId = ""
+            _clientId = ""
             lastSentSubscriptions = []
 
             if wasConnected || wasReconnecting {
-                return (wasConnected, true, [])
+                return (outgoingClientId, wasConnected, true, [])
             }
 
             let pending = pendingConnects
             pendingConnects.removeAll()
-            return (false, false, pending)
+            return (outgoingClientId, false, false, pending)
         }
+
+        cancelSubscriptionRequest(for: outgoingClientId)
 
         if shouldReconnect {
             if wasConnected {
@@ -492,6 +543,46 @@ open class RealtimeService: BaseService, @unchecked Sendable {
             for continuation in continuations {
                 continuation.resume(throwing: error)
             }
+        }
+    }
+
+    /// Handles a failed connect attempt or post-`PB_CONNECT` submission.
+    ///
+    /// Rejects pending connects when no reconnect was in progress; otherwise
+    /// leaves them pending and schedules another background reconnect.
+    private func connectErrorHandler(_ error: Error?) {
+        let (outgoingClientId, shouldReject, continuations) = withLock {
+            () -> (String, Bool, [CheckedContinuation<Void, Error>]) in
+            let outgoing = _clientId
+            let wasReconnecting = reconnectAttempts > 0
+
+            connectTimeoutTask?.cancel()
+            connectTimeoutTask = nil
+            reconnectTask?.cancel()
+            reconnectTask = nil
+            transport?.cancel()
+            transport = nil
+            isTransportActive = false
+            _clientId = ""
+            lastSentSubscriptions = []
+
+            if !wasReconnecting {
+                let pending = pendingConnects
+                pendingConnects.removeAll()
+                return (outgoing, true, pending)
+            }
+            return (outgoing, false, [])
+        }
+
+        cancelSubscriptionRequest(for: outgoingClientId)
+
+        if shouldReject {
+            let failure = error ?? ClientResponseError(message: "Failed to establish realtime connection.")
+            for continuation in continuations {
+                continuation.resume(throwing: failure)
+            }
+        } else {
+            scheduleReconnect()
         }
     }
 
@@ -598,7 +689,7 @@ open class RealtimeService: BaseService, @unchecked Sendable {
     private func performSubmit() async throws {
         let (currentClientId, keys, shouldReturn, shouldDisconnect) = withLock {
             () -> (String, [String], Bool, Bool) in
-            if clientId.isEmpty {
+            if _clientId.isEmpty {
                 return ("", [], true, false)
             }
 
@@ -608,14 +699,18 @@ open class RealtimeService: BaseService, @unchecked Sendable {
                 .sorted()
 
             if keys.isEmpty {
-                return (clientId, [], false, true)
+                return (_clientId, [], false, true)
             }
 
             if Set(keys) == Set(lastSentSubscriptions) {
-                return (clientId, keys, true, false)
+                return (_clientId, keys, true, false)
             }
 
-            return (clientId, keys, false, false)
+            // Optimistic write, mirroring the JS SDK: record the intended
+            // subscriptions before the POST so a resubmit queued behind this
+            // one is not suppressed if the connection has moved on meanwhile.
+            lastSentSubscriptions = keys
+            return (_clientId, keys, false, false)
         }
 
         if shouldReturn {
@@ -624,6 +719,15 @@ open class RealtimeService: BaseService, @unchecked Sendable {
 
         if shouldDisconnect {
             disconnect()
+            return
+        }
+
+        // The connection may have moved on while this submit waited in the
+        // queue (for example across a reconnect); never POST for a stale id.
+        let isStale = withLock {
+            _clientId != currentClientId || !isTransportActive
+        }
+        if isStale {
             return
         }
 
@@ -637,9 +741,6 @@ open class RealtimeService: BaseService, @unchecked Sendable {
 
         do {
             let _: Data = try await client.sendRaw(path: "/api/realtime", options: options)
-            withLock {
-                lastSentSubscriptions = keys
-            }
         } catch {
             if let err = error as? ClientResponseError, err.isAbort {
                 return

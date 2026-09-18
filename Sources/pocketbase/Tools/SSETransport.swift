@@ -95,6 +95,27 @@ final class URLSessionSSETransport: NSObject, SSETransport, URLSessionDataDelega
         self.task = nil
         lock.unlock()
         task?.cancel()
+        invalidateSession()
+    }
+
+    /// Tears down the dedicated session so it releases its delegate (the
+    /// transport) and cannot keep the transport alive.
+    ///
+    /// Called outside the lock because `invalidateAndCancel()` may re-enter
+    /// delegate code.
+    private func invalidateSession() {
+        lock.lock()
+        let session = self.session
+        self.session = nil
+        lock.unlock()
+        session?.invalidateAndCancel()
+    }
+
+    /// Whether a dedicated session is currently allocated.
+    var hasActiveSession: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return session != nil
     }
 
     // MARK: - URLSessionDataDelegate
@@ -179,5 +200,6 @@ final class URLSessionSSETransport: NSObject, SSETransport, URLSessionDataDelega
         lock.unlock()
 
         handler?(error)
+        invalidateSession()
     }
 }

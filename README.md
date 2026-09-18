@@ -174,6 +174,10 @@ let unsub = try await pb.collection("posts").subscribe(topic: "*") { event in
 try await unsub()
 ```
 
+On an unexpected disconnect the client reconnects with a jittered backoff and resubmits the active topics. A server-directed SSE `retry:` delay acts as a floor and disables the jitter (the JS SDK ignores `retry:` for its custom reconnect).
+
+Compared with the JS SDK, Swift uses `subscribe(topic:options:callback:)` and keeps `handleMessage(event:id:data:)` public for manual frame injection.
+
 ---
 
 ## 📦 Batch Operations
