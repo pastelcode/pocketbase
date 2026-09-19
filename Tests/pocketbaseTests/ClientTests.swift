@@ -29,6 +29,19 @@ struct ClientTests {
         #expect(service1.collectionIdOrName == service3.collectionIdOrName)
     }
 
+    @Test func testCollectionCacheIsScopedToModelType() {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+
+        let untyped = client.collection("posts")
+        let typed: RecordService<CustomPost> = client.collection("posts")
+        let untypedAgain = client.collection("posts")
+        let typedAgain: RecordService<CustomPost> = client.collection("posts")
+
+        #expect(untyped === untypedAgain)
+        #expect(typed === typedAgain)
+        #expect((untyped as AnyObject) !== (typed as AnyObject))
+    }
+
     @Test func testBuildURL() {
         let client1 = PocketBase(baseURL: "http://127.0.0.1:8090/")
         #expect(client1.buildURL(path: "test123") == "http://127.0.0.1:8090/test123")
@@ -180,4 +193,9 @@ struct ClientTests {
         let result: [String: AnyCodable] = try await client.send(path: "/api/old", options: options)
         #expect(result["status"]?.value.string == "hooked")
     }
+}
+
+/// A custom record model used to verify the typed collection service cache.
+private struct CustomPost: Codable, Sendable {
+    var id: String
 }

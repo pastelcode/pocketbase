@@ -126,43 +126,47 @@ open class PocketBase: @unchecked Sendable {
 
     /// Returns the record service for the collection with the given id or name.
     ///
-    /// Services are cached per collection, so repeated calls with the same
-    /// argument return the same instance.
+    /// Services are cached per collection and model type, so repeated calls
+    /// with the same argument and model return the same instance.
     ///
     /// - Parameter idOrName: The collection id or name.
     /// - Returns: A record service bound to the collection.
     open func collection(_ idOrName: String) -> RecordService<RecordModel> {
-        lock.lock()
-        defer { lock.unlock() }
-
-        if let existing = recordServices[idOrName] as? RecordService<RecordModel> {
-            return existing
-        }
-
-        let service = RecordService<RecordModel>(self, collectionIdOrName: idOrName)
-        recordServices[idOrName] = service
-        return service
+        return recordService(idOrName, as: RecordModel.self)
     }
 
     /// Returns the record service for the collection with the given id or name,
     /// decoding records as `M`.
     ///
-    /// Services are cached per collection, so repeated calls with the same
-    /// argument return the same instance.
+    /// Services are cached per collection and model type, so repeated calls
+    /// with the same argument and model return the same instance.
     ///
     /// - Parameter idOrName: The collection id or name.
     /// - Returns: A typed record service bound to the collection.
     open func collection<M: Codable & Sendable>(_ idOrName: String) -> RecordService<M> {
+        return recordService(idOrName, as: M.self)
+    }
+
+    /// Returns the cached record service for the given collection and model
+    /// type, creating and registering it on first use.
+    private func recordService<M: Codable & Sendable>(_ idOrName: String, as type: M.Type) -> RecordService<M> {
         lock.lock()
         defer { lock.unlock() }
 
-        if let existing = recordServices[idOrName] as? RecordService<M> {
+        let key = recordServiceCacheKey(idOrName, as: type)
+        if let existing = recordServices[key] as? RecordService<M> {
             return existing
         }
 
         let service = RecordService<M>(self, collectionIdOrName: idOrName)
-        recordServices[idOrName] = service
+        recordServices[key] = service
         return service
+    }
+
+    /// Builds the cache key for `idOrName` scoped to the model type, so generic
+    /// and non-generic callers never overwrite each other's instance.
+    private func recordServiceCacheKey<M>(_ idOrName: String, as type: M.Type) -> String {
+        return "\(idOrName)#\(ObjectIdentifier(type))"
     }
 
     /// Creates a batch service for sending multiple requests in one call.

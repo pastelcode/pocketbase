@@ -115,6 +115,24 @@ struct CrudServiceTests {
                 ]
             ]
         ))
+        await fetchMock.on(RequestMock(
+            method: "GET",
+            url: "http://127.0.0.1:8090/api/collections/posts/records/p1",
+            replyCode: 200,
+            jsonBody: ["id": "p1", "collectionId": "col1", "collectionName": "posts", "title": "hello"]
+        ))
+        await fetchMock.on(RequestMock(
+            method: "POST",
+            url: "http://127.0.0.1:8090/api/collections/posts/records",
+            replyCode: 200,
+            jsonBody: ["id": "p2", "collectionId": "col1", "collectionName": "posts", "title": "hello"]
+        ))
+        await fetchMock.on(RequestMock(
+            method: "PATCH",
+            url: "http://127.0.0.1:8090/api/collections/posts/records/p1",
+            replyCode: 200,
+            jsonBody: ["id": "p1", "collectionId": "col1", "collectionName": "posts", "title": "hello"]
+        ))
 
         var options = SendOptions()
         options.fetch = await fetchMock.customFetch()
@@ -122,6 +140,110 @@ struct CrudServiceTests {
         let list: ListResult<RecordModel> = try await service.getList(options: options)
         #expect(list.items.count == 1)
         #expect(list.items.first?["title"]?.stringValue == "HELLO")
+
+        let one: RecordModel = try await service.getOne(id: "p1", options: options)
+        #expect(one["title"]?.stringValue == "HELLO")
+
+        let created: RecordModel = try await service.create(
+            bodyParams: .json(["title": AnyCodable("hello")]),
+            options: options
+        )
+        #expect(created["title"]?.stringValue == "HELLO")
+
+        let updated: RecordModel = try await service.update(
+            id: "p1",
+            bodyParams: .json(["title": AnyCodable("hello")]),
+            options: options
+        )
+        #expect(updated["title"]?.stringValue == "HELLO")
+    }
+
+    @Test func testGetFullListTreatsNonPositiveBatchAsDefault() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let service: RecordService<RecordModel> = client.collection("posts")
+
+        let fetchMock = FetchMock()
+        await fetchMock.on(RequestMock(
+            method: "GET",
+            url: "http://127.0.0.1:8090/api/collections/posts/records?page=1&perPage=1000&skipTotal=1",
+            replyCode: 200,
+            jsonBody: [
+                "page": 1,
+                "perPage": 1000,
+                "totalItems": 1,
+                "totalPages": 1,
+                "items": [
+                    ["id": "p1", "collectionId": "col1", "collectionName": "posts", "title": "Post 1"]
+                ]
+            ]
+        ))
+
+        var options = SendOptions()
+        options.batch = 0
+        options.fetch = await fetchMock.customFetch()
+
+        let list: [RecordModel] = try await service.getFullList(options: options)
+        #expect(list.count == 1)
+        #expect(list.first?.id == "p1")
+    }
+
+    @Test func testGetFullListStopsWhenServerReturnsMoreThanPerPage() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let service: RecordService<RecordModel> = client.collection("posts")
+
+        let fetchMock = FetchMock()
+        await fetchMock.on(RequestMock(
+            method: "GET",
+            url: "http://127.0.0.1:8090/api/collections/posts/records?page=1&perPage=2&skipTotal=1",
+            replyCode: 200,
+            jsonBody: [
+                "page": 1,
+                "perPage": 2,
+                "totalItems": 3,
+                "totalPages": 2,
+                "items": [
+                    ["id": "p1", "collectionId": "col1", "collectionName": "posts", "title": "Post 1"],
+                    ["id": "p2", "collectionId": "col1", "collectionName": "posts", "title": "Post 2"],
+                    ["id": "p3", "collectionId": "col1", "collectionName": "posts", "title": "Post 3"]
+                ]
+            ]
+        ))
+
+        var options = SendOptions()
+        options.batch = 2
+        options.fetch = await fetchMock.customFetch()
+
+        let list: [RecordModel] = try await service.getFullList(options: options)
+        #expect(list.count == 3)
+        #expect(list.map(\.id) == ["p1", "p2", "p3"])
+    }
+
+    @Test func testGetFullListRespectsCallerSkipTotalOverride() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let service: RecordService<RecordModel> = client.collection("posts")
+
+        let fetchMock = FetchMock()
+        await fetchMock.on(RequestMock(
+            method: "GET",
+            url: "http://127.0.0.1:8090/api/collections/posts/records?page=1&perPage=1000&skipTotal=0",
+            replyCode: 200,
+            jsonBody: [
+                "page": 1,
+                "perPage": 1000,
+                "totalItems": 1,
+                "totalPages": 1,
+                "items": [
+                    ["id": "p1", "collectionId": "col1", "collectionName": "posts", "title": "Post 1"]
+                ]
+            ]
+        ))
+
+        var options = SendOptions()
+        options.query["skipTotal"] = AnyCodable(0)
+        options.fetch = await fetchMock.customFetch()
+
+        let list: [RecordModel] = try await service.getFullList(options: options)
+        #expect(list.count == 1)
     }
 }
 

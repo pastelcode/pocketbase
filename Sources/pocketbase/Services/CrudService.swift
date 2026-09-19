@@ -19,11 +19,17 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
         fatalError("baseCrudPath must be overridden by subclass")
     }
 
-    /// Converts a raw decoded list item into the service's model type.
+    /// Converts a raw response value into the service's model type.
     ///
     /// The default implementation re-encodes the value and decodes it as `T`.
-    /// Override this method to customize how ``getList(page:perPage:options:)``
-    /// materializes items, for example to normalize field names before decoding.
+    /// Override this method to customize how responses are materialized, for
+    /// example to normalize field names before decoding.
+    ///
+    /// The hook is applied to every CRUD response: each item returned by
+    /// ``getList(page:perPage:options:)`` and ``getFullList(options:)``, and
+    /// the results of ``getOne(id:options:)``, ``create(bodyParams:options:)``,
+    /// and ``update(id:bodyParams:options:)``. ``RecordService`` additionally
+    /// routes auth records through it.
     ///
     /// ```swift
     /// final class PostsService: CrudService<RecordModel> {
@@ -36,7 +42,7 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
     /// }
     /// ```
     ///
-    /// - Parameter item: The raw item decoded from the list response.
+    /// - Parameter item: The raw value decoded from the response.
     /// - Returns: The typed item.
     /// - Throws: An error when the value cannot be converted to `T`.
     open func decode<T: Codable & Sendable>(_ item: AnyCodable) throws -> T {
@@ -48,14 +54,18 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
     /// until the result set is exhausted.
     ///
     /// The page size is controlled by `SendOptions.batch` and defaults to
-    /// `1000`; `skipTotal` is always applied to each request.
+    /// `1000`; non-positive values fall back to the default. A `skipTotal=1`
+    /// query value is applied by default, but caller options can override it.
     ///
     /// - Parameter options: Request options such as a filter or sort order.
     /// - Returns: All matching items.
     /// - Throws: A ``ClientResponseError`` if a page request fails.
     open func getFullList<T: Codable & Sendable>(options: SendOptions? = nil) async throws -> [T] {
         var opt = options ?? SendOptions()
-        let batch = opt.batch ?? 1000
+        var batch = opt.batch ?? 1000
+        if batch <= 0 {
+            batch = 1000
+        }
         opt.applyDefaultQuery(["skipTotal": AnyCodable(1)])
 
         var result: [T] = []
@@ -64,7 +74,7 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
         while true {
             let list: ListResult<T> = try await getList(page: page, perPage: batch, options: opt)
             result.append(contentsOf: list.items)
-            if list.items.count < list.perPage {
+            if list.items.count != list.perPage {
                 break
             }
             page += 1
@@ -137,6 +147,9 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
 
     /// Returns a single item by id.
     ///
+    /// The response is materialized through ``decode(_:)``, which subclasses
+    /// can override to customize decoding.
+    ///
     /// - Parameters:
     ///   - id: The record id.
     ///   - options: Additional request options.
@@ -159,10 +172,14 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
         var opt = options ?? SendOptions()
         opt.applyDefaultMethod("GET")
         let encodedId = id.encodeURIComponent()
-        return try await client.send(path: "\(baseCrudPath)/\(encodedId)", options: opt)
+        let raw: AnyCodable = try await client.send(path: "\(baseCrudPath)/\(encodedId)", options: opt)
+        return try decode(raw)
     }
 
     /// Creates a new item.
+    ///
+    /// The response is materialized through ``decode(_:)``, which subclasses
+    /// can override to customize decoding.
     ///
     /// - Parameters:
     ///   - bodyParams: The fields to set on the new item. Defaults to `nil`.
@@ -173,10 +190,14 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
         var opt = options ?? SendOptions()
         opt.applyDefaultMethod("POST")
         opt.applyDefaultBody(bodyParams)
-        return try await client.send(path: baseCrudPath, options: opt)
+        let raw: AnyCodable = try await client.send(path: baseCrudPath, options: opt)
+        return try decode(raw)
     }
 
     /// Updates an existing item.
+    ///
+    /// The response is materialized through ``decode(_:)``, which subclasses
+    /// can override to customize decoding.
     ///
     /// - Parameters:
     ///   - id: The id of the item to update.
@@ -189,7 +210,8 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
         opt.applyDefaultMethod("PATCH")
         opt.applyDefaultBody(bodyParams)
         let encodedId = id.encodeURIComponent()
-        return try await client.send(path: "\(baseCrudPath)/\(encodedId)", options: opt)
+        let raw: AnyCodable = try await client.send(path: "\(baseCrudPath)/\(encodedId)", options: opt)
+        return try decode(raw)
     }
 
     /// Deletes an item by id.
