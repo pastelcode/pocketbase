@@ -82,6 +82,35 @@ public struct ClientResponseError: Error, CustomStringConvertible, Equatable, @u
         }
     }
 
+    /// Creates a normalized error from an arbitrary thrown error, mirroring the
+    /// reference SDK's `ClientResponseError` constructor.
+    ///
+    /// When `error` is already a ``ClientResponseError``, its ``url``,
+    /// ``status``, ``response``, ``isAbort`` and ``originalError`` are preserved
+    /// and ``message`` is re-derived from the existing response. Any other error
+    /// becomes the ``originalError`` of a client-side error (`status: 0`).
+    ///
+    /// This is used to normalize failures thrown inside the ``PocketBase/beforeSend``
+    /// and ``PocketBase/afterSend`` hooks.
+    ///
+    /// - Parameters:
+    ///   - error: The error to normalize.
+    ///   - url: The URL associated with the failure. Ignored when `error` is a
+    ///     ``ClientResponseError``. Defaults to `""`.
+    public init(wrapping error: Error, url: String = "") {
+        if let existing = error as? ClientResponseError {
+            self.init(
+                url: existing.url,
+                status: existing.status,
+                response: existing.response,
+                isAbort: existing.isAbort,
+                originalError: existing.originalError
+            )
+        } else {
+            self.init(url: url, originalError: error)
+        }
+    }
+
     /// A textual representation including the status code, message, and URL.
     public var description: String {
         return "ClientResponseError \(status): \(message) (URL: \(url))"

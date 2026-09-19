@@ -170,6 +170,53 @@ struct SendPipelineTests {
         #expect(attachmentParts.first?.filename == "a.txt")
     }
 
+    @Test func beforeSendErrorsAreWrapped() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let fetch: CustomFetch = { request in (Data("{}".utf8), httpResponse(for: request)) }
+
+        var options = SendOptions()
+        options.fetch = fetch
+        client.beforeSend = { _, _ in throw PipelineBoom() }
+
+        do {
+            _ = try await client.sendRaw(path: "/api/things", options: options)
+            #expect(Bool(false), "expected a ClientResponseError")
+        } catch let error as ClientResponseError {
+            #expect(error.status == 0)
+            #expect(error.originalError is PipelineBoom)
+            #expect(error.message == "Something went wrong.")
+        }
+    }
+
+    @Test func beforeSendThrownClientResponseErrorPreservesMetadata() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let fetch: CustomFetch = { request in (Data("{}".utf8), httpResponse(for: request)) }
+
+        var options = SendOptions()
+        options.fetch = fetch
+        client.beforeSend = { _, _ in
+            throw ClientResponseError(
+                url: "http://127.0.0.1:8090/custom",
+                status: 418,
+                response: ["message": AnyCodable("teapot")],
+                isAbort: true,
+                originalError: PipelineBoom()
+            )
+        }
+
+        do {
+            _ = try await client.sendRaw(path: "/api/things", options: options)
+            #expect(Bool(false), "expected a ClientResponseError")
+        } catch let error as ClientResponseError {
+            #expect(error.status == 418)
+            #expect(error.url == "http://127.0.0.1:8090/custom")
+            #expect(error.response["message"]?.value.string == "teapot")
+            #expect(error.message == "teapot")
+            #expect(error.isAbort)
+            #expect(error.originalError is PipelineBoom)
+        }
+    }
+
     @Test func afterSendErrorsAreWrapped() async throws {
         let client = PocketBase(baseURL: "http://127.0.0.1:8090")
         let fetch: CustomFetch = { request in (Data("{}".utf8), httpResponse(for: request)) }
@@ -182,8 +229,92 @@ struct SendPipelineTests {
             _ = try await client.sendRaw(path: "/api/things", options: options)
             #expect(Bool(false), "expected a ClientResponseError")
         } catch let error as ClientResponseError {
+            #expect(error.status == 0)
             #expect(error.originalError is PipelineBoom)
-            #expect(error.message.contains("afterSend"))
+            #expect(error.message == "Something went wrong.")
+        }
+    }
+
+    @Test func afterSendThrownClientResponseErrorPreservesMetadata() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let fetch: CustomFetch = { request in (Data("{}".utf8), httpResponse(for: request)) }
+
+        var options = SendOptions()
+        options.fetch = fetch
+        client.afterSend = { _, _, _ in
+            throw ClientResponseError(
+                url: "http://127.0.0.1:8090/mapped",
+                status: 400,
+                response: ["message": AnyCodable("mapped error")]
+            )
+        }
+
+        do {
+            _ = try await client.sendRaw(path: "/api/things", options: options)
+            #expect(Bool(false), "expected a ClientResponseError")
+        } catch let error as ClientResponseError {
+            #expect(error.status == 400)
+            #expect(error.url == "http://127.0.0.1:8090/mapped")
+            #expect(error.response["message"]?.value.string == "mapped error")
+            #expect(error.message == "mapped error")
+        }
+    }
+
+    @Test func decodeErrorsReportFinalURL() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let fetch: CustomFetch = { request in (Data("not json".utf8), httpResponse(for: request)) }
+
+        var options = SendOptions()
+        options.fetch = fetch
+        options.query = ["page": 1]
+        client.beforeSend = { _, options in
+            return (url: "http://127.0.0.1:8090/rewritten", options: options)
+        }
+
+        do {
+            let _: RecordModel = try await client.send(path: "/api/things", options: options)
+            #expect(Bool(false), "expected a ClientResponseError")
+        } catch let error as ClientResponseError {
+            #expect(error.originalError is DecodingError)
+            #expect(error.url == "http://127.0.0.1:8090/rewritten?page=1")
+        }
+    }
+
+    @Test func httpErrorWithNonObjectBodyCollapsesToEmptyResponse() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let fetch: CustomFetch = { request in
+            (Data("[\"email is required\"]".utf8), httpResponse(for: request, status: 400))
+        }
+
+        var options = SendOptions()
+        options.fetch = fetch
+
+        do {
+            _ = try await client.sendRaw(path: "/api/things", options: options)
+            #expect(Bool(false), "expected a ClientResponseError")
+        } catch let error as ClientResponseError {
+            #expect(error.status == 400)
+            #expect(error.response.isEmpty)
+            #expect(error.originalError == nil)
+        }
+    }
+
+    @Test func httpErrorWithObjectBodyIsPreserved() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let fetch: CustomFetch = { request in
+            (Data("{\"message\":\"nope\"}".utf8), httpResponse(for: request, status: 400))
+        }
+
+        var options = SendOptions()
+        options.fetch = fetch
+
+        do {
+            _ = try await client.sendRaw(path: "/api/things", options: options)
+            #expect(Bool(false), "expected a ClientResponseError")
+        } catch let error as ClientResponseError {
+            #expect(error.status == 400)
+            #expect(error.response["message"]?.value.string == "nope")
+            #expect(error.message == "nope")
         }
     }
 

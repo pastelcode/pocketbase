@@ -351,14 +351,14 @@ open class PocketBase: @unchecked Sendable {
     /// - Throws: A ``ClientResponseError`` when the request fails or the
     ///   response cannot be decoded into `T`.
     open func send<T: Decodable & Sendable>(path: String, options: SendOptions) async throws -> T {
-        let rawData = try await sendRaw(path: path, options: options)
+        let (rawData, finalURL) = try await sendRawResponse(path: path, options: options)
         // Match the reference SDK: an empty/unparsable body is treated as `{}`.
         let data = rawData.isEmpty ? Data("{}".utf8) : rawData
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
             throw ClientResponseError(
-                url: buildURL(path: path),
+                url: finalURL.absoluteString,
                 status: 0,
                 originalError: error,
                 message: "Failed to decode response: \(error.localizedDescription)"
@@ -380,14 +380,38 @@ open class PocketBase: @unchecked Sendable {
     /// - Throws: A ``ClientResponseError`` when the request fails or the server
     ///   responds with an error status.
     open func sendRaw(path: String, options: SendOptions) async throws -> Data {
+        let (data, _) = try await sendRawResponse(path: path, options: options)
+        return data
+    }
+
+    /// Sends a request and returns the raw response body together with the
+    /// final response URL.
+    ///
+    /// The URL reflects the ``beforeSend`` result and includes the serialized
+    /// query parameters, and follows any redirect performed by the transport.
+    /// Both ``send(path:options:)`` and ``sendRaw(path:options:)`` route through
+    /// this method, so it is the override point for customizing the send
+    /// pipeline.
+    ///
+    /// - Parameters:
+    ///   - path: The API path, relative to ``baseURL``.
+    ///   - options: The request options.
+    /// - Returns: The raw response body and the final response URL.
+    /// - Throws: A ``ClientResponseError`` when the request fails or the server
+    ///   responds with an error status.
+    open func sendRawResponse(path: String, options: SendOptions) async throws -> (Data, URL) {
         var initOptions = initSendOptions(path: path, options: options)
         let cancellationKey = autoCancellationKey(path: path, options: initOptions)
         var urlString = buildURL(path: path)
 
         if let before = beforeSend {
-            let (newUrl, newOptions) = try await before(urlString, initOptions)
-            urlString = newUrl
-            initOptions = newOptions
+            do {
+                let (newUrl, newOptions) = try await before(urlString, initOptions)
+                urlString = newUrl
+                initOptions = newOptions
+            } catch {
+                throw ClientResponseError(wrapping: error, url: urlString)
+            }
         }
 
         if !initOptions.query.isEmpty {
@@ -477,10 +501,8 @@ open class PocketBase: @unchecked Sendable {
                 finalData = try await after(httpResponse, finalData, initOptions)
             } catch {
                 throw ClientResponseError(
-                    url: httpResponse.url?.absoluteString ?? urlString,
-                    status: 0,
-                    originalError: error,
-                    message: "afterSend hook failed: \(error.localizedDescription)"
+                    wrapping: error,
+                    url: httpResponse.url?.absoluteString ?? urlString
                 )
             }
         }
@@ -497,7 +519,7 @@ open class PocketBase: @unchecked Sendable {
             )
         }
 
-        return finalData
+        return (finalData, httpResponse.url ?? url)
     }
 
     private func initSendOptions(path: String, options: SendOptions) -> SendOptions {
