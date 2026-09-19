@@ -245,7 +245,8 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
         let respData: [String: AnyCodable] = try await client.send(path: "\(baseCollectionPath)/auth-with-password", options: opt)
         let result: RecordAuthResponse<T> = try processAuthResponse(respData)
 
-        if let threshold = autoRefreshThreshold, isSuperusers {
+        // A zero threshold does not register the hook, matching the JS truthiness check.
+        if let threshold = autoRefreshThreshold, threshold > 0, isSuperusers {
             AutoRefresh.registerAutoRefresh(
                 client,
                 threshold: threshold,

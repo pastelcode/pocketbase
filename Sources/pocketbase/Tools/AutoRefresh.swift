@@ -11,12 +11,13 @@ public struct AutoRefresh: Sendable {
 
     /// Installs a hook that refreshes or re-authenticates before requests.
     ///
-    /// The hook runs before every request whose options do not set
-    /// ``SendOptions/autoRefresh`` to `true`. If the stored token is valid but
-    /// expires within `threshold` seconds, `refreshFunc` is invoked; if the
-    /// token is invalid or the refresh fails, `reauthenticateFunc` is invoked.
-    /// Any previously registered hook is removed first, and the hook resets
-    /// itself when the auth store is cleared or switches record.
+    /// The hook runs before every request whose options do not bypass it via
+    /// ``SendOptions/autoRefresh`` or a truthy `query["autoRefresh"]` value. If
+    /// the stored token is valid but expires within `threshold` seconds,
+    /// `refreshFunc` is invoked; if the token is invalid or the refresh fails,
+    /// `reauthenticateFunc` is invoked. Any previously registered hook is
+    /// removed first, and the hook resets itself when the auth store is cleared
+    /// or switches record.
     ///
     /// ```swift
     /// AutoRefresh.registerAutoRefresh(
@@ -53,24 +54,34 @@ public struct AutoRefresh: Sendable {
         let oldBeforeSend = client.beforeSend
         let oldRecord = client.authStore.record
 
-        let unsubStore = client.authStore.onChange { newToken, model in
-            if newToken.isEmpty ||
+        // The client and store references are weak so that registering the
+        // hooks does not keep a released client (and its services) alive.
+        let unsubStore = client.authStore.onChange { [weak client] newToken, model in
+            let newCollection = model?.collectionId ?? ""
+            let oldCollection = oldRecord?.collectionId ?? ""
+            let shouldReset = newToken.isEmpty ||
                 model?.id != oldRecord?.id ||
-                ((model?.collectionId != nil || oldRecord?.collectionId != nil) &&
-                    model?.collectionId != oldRecord?.collectionId) {
-                resetAutoRefresh(client)
-            }
+                ((!newCollection.isEmpty || !oldCollection.isEmpty) && newCollection != oldCollection)
+
+            guard shouldReset, let client = client else { return }
+            resetAutoRefresh(client)
         }
 
-        client.setAutoRefreshResetHandler {
+        client.setAutoRefreshResetHandler { [weak client] in
             unsubStore()
-            client.beforeSend = oldBeforeSend
+            client?.beforeSend = oldBeforeSend
         }
 
-        client.beforeSend = { url, sendOptions in
+        client.beforeSend = { [weak client] url, sendOptions in
+            guard let client = client else {
+                return (url, sendOptions)
+            }
+
             let oldToken = client.authStore.token
 
-            if sendOptions.autoRefresh == true {
+            let bypassesAutoRefresh = sendOptions.autoRefresh == true ||
+                sendOptions.query["autoRefresh"]?.boolValue == true
+            if bypassesAutoRefresh {
                 if let old = oldBeforeSend {
                     return try await old(url, sendOptions)
                 }

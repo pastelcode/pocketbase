@@ -64,7 +64,21 @@ open class PocketBase: @unchecked Sendable {
     /// - Note: The hook must return both the URL and the options. The
     ///   deprecated options-only return shape from the reference SDK is not
     ///   supported.
-    open var beforeSend: (@Sendable (String, SendOptions) async throws -> (url: String, options: SendOptions))?
+    ///
+    /// The property is synchronized: reads and writes are protected by the
+    /// client lock, so the auto-refresh hooks can swap it safely.
+    open var beforeSend: (@Sendable (String, SendOptions) async throws -> (url: String, options: SendOptions))? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _beforeSend
+        }
+        set {
+            lock.lock()
+            defer { lock.unlock() }
+            _beforeSend = newValue
+        }
+    }
     /// An optional hook invoked after a response is received.
     ///
     /// Receives the raw `HTTPURLResponse` and body data together with the
@@ -74,6 +88,7 @@ open class PocketBase: @unchecked Sendable {
     open var afterSend: (@Sendable (HTTPURLResponse, Data, SendOptions) async throws -> Data)?
 
     private let lock = NSRecursiveLock()
+    private var _beforeSend: (@Sendable (String, SendOptions) async throws -> (url: String, options: SendOptions))?
     private var recordServices: [String: Any] = [:]
     private var enableAutoCancellation: Bool = true
     private var cancelHandles: [String: CancellationHandle] = [:]

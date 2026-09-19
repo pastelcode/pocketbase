@@ -150,3 +150,25 @@ let auth: RecordAuthResponse<RecordModel> = try await pb.collection("_superusers
     options: options
 )
 ```
+
+A threshold of `0` does not register the hook. Requests with ``SendOptions/autoRefresh`` set to `true` — or a truthy `query["autoRefresh"]` value — bypass the hook and are sent with the current auth state.
+
+Alternatively, register the hook explicitly with ``AutoRefresh`` — for example when the client is created before the auth state is known:
+
+```swift
+AutoRefresh.registerAutoRefresh(
+    pb,
+    threshold: 1800,
+    refreshFunc: {
+        let _: RecordAuthResponse<RecordModel> = try await pb.collection("_superusers").authRefresh()
+    },
+    reauthenticateFunc: {
+        let _: RecordAuthResponse<RecordModel> = try await pb.collection("_superusers").authWithPassword(
+            usernameOrEmail: "admin@example.com",
+            password: "secret"
+        )
+    }
+)
+```
+
+The hook refreshes the token when it is valid but expires within the threshold, and re-authenticates when it is invalid or the refresh fails. It removes itself when the auth store is cleared or a different record is authenticated; call ``AutoRefresh/resetAutoRefresh(_:)`` to remove it manually.

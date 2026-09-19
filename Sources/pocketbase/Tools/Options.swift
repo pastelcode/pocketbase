@@ -127,7 +127,9 @@ public struct SendOptions: Sendable {
     /// Whether the request bypasses the auth auto-refresh hook.
     ///
     /// When `true`, the registered auto-refresh handler is skipped and the
-    /// request is sent with the current auth state.
+    /// request is sent with the current auth state. A truthy
+    /// `query["autoRefresh"]` value is honored as well, matching the reference
+    /// SDK's query-key check.
     public var autoRefresh: Bool?
     /// Seconds added to the token expiry check during auth auto-refresh.
     ///
