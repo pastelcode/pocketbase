@@ -108,7 +108,7 @@ The SDK subscribes to a one-off `@oauth2` realtime channel, passes the provider 
 | Android | an `Intent` with `Intent.ACTION_VIEW` (for example Chrome Custom Tabs) |
 | Linux / server | `xdg-open` or any registered URL handler |
 
-Pass `scopes` to replace the provider's default scopes, and `createData` to add fields when the flow creates a new auth record. Cancelling the surrounding task aborts the flow, closes the realtime connection and throws a ``ClientResponseError`` with ``ClientResponseError/isAbort`` set.
+Pass `scopes` to replace the provider's default scopes, and `createData` to add fields when the flow creates a new auth record. Cancelling the surrounding task, or calling ``PocketBase/cancelRequest(_:)`` with the flow's `SendOptions/requestKey` (``PocketBase/cancelAllRequests()`` works too), aborts the flow, closes the realtime connection and throws a ``ClientResponseError`` with ``ClientResponseError/isAbort`` set.
 
 ### Manual code exchange
 

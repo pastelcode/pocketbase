@@ -612,7 +612,12 @@ open class PocketBase: @unchecked Sendable {
         return method + path
     }
 
-    private func beginRequest(key: String?) -> CancellationHandle? {
+    /// Registers a cancellable operation under `key`, cancelling any previous
+    /// handle with the same key.
+    ///
+    /// Internal so services (for example the interactive OAuth2 flow) can
+    /// register non-HTTP operations with ``cancelRequest(_:)``.
+    func beginRequest(key: String?) -> CancellationHandle? {
         guard let key = key else {
             return nil
         }
@@ -628,7 +633,8 @@ open class PocketBase: @unchecked Sendable {
         return handle
     }
 
-    private func endRequest(key: String?, handle: CancellationHandle?) {
+    /// Releases a handle previously returned by ``beginRequest(key:)``.
+    func endRequest(key: String?, handle: CancellationHandle?) {
         guard let key = key, let handle = handle else {
             return
         }

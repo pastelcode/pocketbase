@@ -110,6 +110,10 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
     /// Updates a record and refreshes the auth store when the updated record is
     /// the currently authenticated one.
     ///
+    /// The stored auth record is shallow-merged with the response, which takes
+    /// precedence per field, so fields omitted by a partial response (for
+    /// example with a `fields` selection) keep their stored value.
+    ///
     /// - Parameters:
     ///   - id: The id of the record to update.
     ///   - bodyParams: The fields to update.
@@ -126,7 +130,29 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
         if let currentAuthRecord = client.authStore.record,
            currentAuthRecord.id == item.id,
            (currentAuthRecord.collectionId == collectionIdOrName || currentAuthRecord.collectionName == collectionIdOrName) {
-            var updatedRecord = item
+            // Shallow merge with the response taking precedence per field:
+            // fields omitted by a partial response (eg. a `fields` selection)
+            // keep their stored value.
+            var mergedRecord = currentAuthRecord
+            if !item.id.isEmpty {
+                mergedRecord.id = item.id
+            }
+            if !item.collectionId.isEmpty {
+                mergedRecord.collectionId = item.collectionId
+            }
+            if !item.collectionName.isEmpty {
+                mergedRecord.collectionName = item.collectionName
+            }
+            if let created = item.created {
+                mergedRecord.created = created
+            }
+            if let updated = item.updated {
+                mergedRecord.updated = updated
+            }
+            for (key, value) in item.rawFields {
+                mergedRecord.rawFields[key] = value
+            }
+
             if let currentExpand = currentAuthRecord.expand {
                 var mergedExpand = currentExpand
                 if let itemExpand = item.expand {
@@ -134,9 +160,12 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
                         mergedExpand[k] = v
                     }
                 }
-                updatedRecord.expand = mergedExpand
+                mergedRecord.expand = mergedExpand
+            } else if let itemExpand = item.expand {
+                mergedRecord.expand = itemExpand
             }
-            client.authStore.save(token: client.authStore.token, record: updatedRecord)
+
+            client.authStore.save(token: client.authStore.token, record: mergedRecord)
         }
 
         if let typedResult = item as? T {
@@ -170,10 +199,21 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
     /// Prepares a successful authentication response.
     ///
     /// The record is materialized through ``CrudService/decode(_:)`` (so
-    /// subclasses can customize it) and saved in ``PocketBase/authStore``.
-    /// A missing `token` or `record` defaults to `""` and `{}`, matching the
+    /// subclasses can customize it) and saved in the target client's
+    /// ``PocketBase/authStore`` (the service's own client by default). A
+    /// missing `token` or `record` defaults to `""` and `{}`, matching the
     /// reference SDK.
-    private func processAuthResponse<T: Codable & Sendable>(_ responseData: [String: AnyCodable]) throws -> RecordAuthResponse<T> {
+    ///
+    /// - Parameters:
+    ///   - responseData: The raw JSON auth response.
+    ///   - targetClient: The client whose auth store receives the result.
+    /// - Returns: The typed auth response.
+    /// - Throws: An error when the record cannot be decoded as `T`.
+    private func processAuthResponse<T: Codable & Sendable>(
+        _ responseData: [String: AnyCodable],
+        client targetClient: PocketBase? = nil
+    ) throws -> RecordAuthResponse<T> {
+        let target = targetClient ?? client
         let token = responseData["token"]?.stringValue ?? ""
 
         var recordValue = responseData["record"] ?? AnyCodable([String: AnyCodable]())
@@ -182,7 +222,7 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
         }
 
         let record: RecordModel = try decode(recordValue)
-        client.authStore.save(token: token, record: record)
+        target.authStore.save(token: token, record: record)
 
         let typedRecord: T
         if let typed = record as? T {
@@ -345,9 +385,11 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
     ///   - options: Additional request options forwarded to the code exchange.
     /// - Returns: The authenticated record and token.
     /// - Throws: A ``ClientResponseError`` when the provider is unknown, the
-    ///   realtime state does not match, the connection drops, the task is
+    ///   realtime state does not match, the connection drops, the flow is
     ///   cancelled (``ClientResponseError/isAbort``), or the code exchange
-    ///   fails.
+    ///   fails. Cancellation covers cancelling the surrounding task, calling
+    ///   ``PocketBase/cancelRequest(_:)`` with the flow's
+    ///   `SendOptions/requestKey`, or ``PocketBase/cancelAllRequests()``.
     open func authWithOAuth2<T: Codable & Sendable>(
         provider providerName: String,
         urlCallback: @escaping @Sendable (String) async throws -> Void,
@@ -355,7 +397,12 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
         createData: [String: AnyCodable]? = nil,
         options: SendOptions? = nil
     ) async throws -> RecordAuthResponse<T> {
-        let authMethods = try await listAuthMethods()
+        var methodsOptions: SendOptions?
+        if let requestKey = options?.requestKey, !requestKey.isEmpty {
+            methodsOptions = SendOptions(requestKey: requestKey)
+        }
+
+        let authMethods = try await listAuthMethods(options: methodsOptions)
         guard let provider = authMethods.oauth2.providers.first(where: { $0.name == providerName }) else {
             throw ClientResponseError(message: "Missing or invalid provider \"\(providerName)\".")
         }
@@ -363,6 +410,8 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
         let redirectURL = client.buildURL(path: "/api/oauth2-redirect")
         let realtime = oauth2RealtimeServiceFactory?() ?? RealtimeService(client)
         let inbox = OAuth2EventInbox()
+        let requestKey = options?.requestKey
+        let cancellationHandle = beginOAuth2Cancellation(requestKey: requestKey, inbox: inbox)
 
         // A dropped connection while the flow is active can never complete.
         realtime.onDisconnect = { activeSubscriptions in
@@ -390,12 +439,7 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
 
                 inbox.succeed(code)
             }
-        } catch {
-            await cleanupOAuth2(realtime)
-            throw error
-        }
 
-        do {
             let authURL = buildOAuth2AuthURL(
                 provider: provider,
                 redirectURL: redirectURL,
@@ -418,11 +462,11 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
                 createData: createData,
                 options: options
             )
-            await cleanupOAuth2(realtime)
+            await finishOAuth2(realtime, requestKey: requestKey, handle: cancellationHandle)
             return result
         } catch {
-            await cleanupOAuth2(realtime)
-            throw error
+            await finishOAuth2(realtime, requestKey: requestKey, handle: cancellationHandle)
+            throw oauth2Error(from: error)
         }
     }
 
@@ -570,43 +614,6 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
         return true
     }
 
-    /// Returns the external auth links of a record.
-    ///
-    /// - Parameters:
-    ///   - recordId: The id of the record.
-    ///   - options: Additional request options.
-    /// - Returns: The external auth records linked to the record.
-    /// - Throws: A ``ClientResponseError`` if the request fails.
-    /// - Important: Deprecated. Use `collection('_externalAuths')` instead.
-    @available(*, deprecated, message: "Use collection('_externalAuths').* instead.")
-    open func listExternalAuths(recordId: String, options: SendOptions? = nil) async throws -> [RecordModel] {
-        var opt = options ?? SendOptions()
-        let filterStr = client.filter("recordRef = {:id}", params: ["id": recordId])
-        opt.query["filter"] = AnyCodable(filterStr)
-        let extAuthService: RecordService<RecordModel> = client.collection("_externalAuths")
-        return try await extAuthService.getFullList(options: opt)
-    }
-
-    /// Removes an external auth link from a record.
-    ///
-    /// - Parameters:
-    ///   - recordId: The id of the record.
-    ///   - provider: The external auth provider name.
-    ///   - options: Additional request options.
-    /// - Returns: `true` when the link is removed.
-    /// - Throws: A ``ClientResponseError`` if the request fails.
-    /// - Important: Deprecated. Use `collection('_externalAuths')` instead.
-    @available(*, deprecated, message: "Use collection('_externalAuths').* instead.")
-    open func unlinkExternalAuth(recordId: String, provider: String, options: SendOptions? = nil) async throws -> Bool {
-        let filterStr = client.filter("recordRef = {:recordId} && provider = {:provider}", params: [
-            "recordId": recordId,
-            "provider": provider
-        ])
-        let extAuthService: RecordService<RecordModel> = client.collection("_externalAuths")
-        let ea: RecordModel = try await extAuthService.getFirstListItem(filter: filterStr)
-        return try await extAuthService.delete(id: ea.id, options: options)
-    }
-
     /// Requests a one-time password email.
     ///
     /// - Parameters:
@@ -645,7 +652,10 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
     /// Impersonates a record for the given duration.
     ///
     /// Returns a new ``PocketBase`` client authenticated as the impersonated
-    /// record; the current client is left untouched.
+    /// record; the current client is left untouched. The response is processed
+    /// like the other auth methods: the record goes through
+    /// ``CrudService/decode(_:)`` and a missing `token`/`record` defaults to
+    /// `""`/`{}`.
     ///
     /// - Parameters:
     ///   - recordId: The id of the record to impersonate.
@@ -664,18 +674,48 @@ open class RecordService<M: Codable & Sendable>: CrudService<M>, @unchecked Send
 
         let newClient = PocketBase(baseURL: client.baseURL, authStore: BaseAuthStore(), lang: client.lang)
         let encodedId = recordId.encodeURIComponent()
-        let authData: RecordAuthResponse<RecordModel> = try await newClient.send(path: "\(baseCollectionPath)/impersonate/\(encodedId)", options: opt)
+        let authData: [String: AnyCodable] = try await newClient.send(path: "\(baseCollectionPath)/impersonate/\(encodedId)", options: opt)
 
-        newClient.authStore.save(token: authData.token, record: authData.record)
+        let _: RecordAuthResponse<RecordModel> = try processAuthResponse(authData, client: newClient)
         return newClient
     }
 
     // MARK: - OAuth2 Flow Helpers
     /// Closes the one-off realtime connection used by the interactive OAuth2
-    /// flow.
-    private func cleanupOAuth2(_ realtime: RealtimeService) async {
+    /// flow and releases its cancellation registration.
+    private func finishOAuth2(_ realtime: RealtimeService, requestKey: String?, handle: CancellationHandle?) async {
         realtime.onDisconnect = nil
         try? await realtime.unsubscribe()
+        client.endRequest(key: requestKey, handle: handle)
+    }
+
+    /// Registers the interactive OAuth2 flow under its `requestKey` so
+    /// ``PocketBase/cancelRequest(_:)`` and ``PocketBase/cancelAllRequests()``
+    /// abort the pending flow, mirroring the reference SDK's
+    /// `AbortController` bridge.
+    private func beginOAuth2Cancellation(requestKey: String?, inbox: OAuth2EventInbox) -> CancellationHandle? {
+        guard let requestKey = requestKey, !requestKey.isEmpty else {
+            return nil
+        }
+
+        let handle = client.beginRequest(key: requestKey)
+        handle?.onCancel {
+            inbox.fail(ClientResponseError(isAbort: true, message: "manually cancelled"))
+        }
+        return handle
+    }
+
+    /// Normalizes an error thrown by the interactive OAuth2 flow so the
+    /// documented ``ClientResponseError`` contract holds for arbitrary errors
+    /// thrown by `urlCallback`, keeping abort detection intact.
+    private func oauth2Error(from error: Error) -> ClientResponseError {
+        if let error = error as? ClientResponseError {
+            return error
+        }
+        if ClientResponseError.isAbortError(error) {
+            return ClientResponseError(isAbort: true, message: "manually cancelled")
+        }
+        return ClientResponseError(originalError: error, message: error.localizedDescription)
     }
 
     /// Builds the provider authorization URL for the one-off OAuth2 flow.

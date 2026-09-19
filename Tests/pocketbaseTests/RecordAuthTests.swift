@@ -31,6 +31,10 @@ private func oauth2AuthMethodsBody() -> [String: Any] {
     ]
 }
 
+private struct URLCallbackError: LocalizedError {
+    var errorDescription: String? { "opener failed" }
+}
+
 private final class LockedURLBox: @unchecked Sendable {
     private let lock = NSLock()
     private var _url: String?
@@ -321,7 +325,7 @@ struct RecordAuthTests {
             try await service.authWithOAuth2(
                 provider: "google",
                 urlCallback: { _ in
-                    throw ClientResponseError(message: "opener failed")
+                    throw URLCallbackError()
                 }
             ) as RecordAuthResponse<RecordModel>
         }
@@ -334,8 +338,45 @@ struct RecordAuthTests {
             Issue.record("Expected the flow to throw")
         } catch let error as ClientResponseError {
             #expect(error.message == "opener failed")
+            #expect(error.originalError is URLCallbackError)
+            #expect(!error.isAbort)
         }
         await waitForAuthFlow { transport.cancelCount == 1 }
+    }
+
+    @Test func authWithOAuth2RequestKeyCancellationAbortsFlow() async throws {
+        let client = makeClient()
+        let transport = FakeTransport()
+        await installOAuth2Mocks(on: client)
+        let service = makeOAuth2Service(on: client, transport: transport)
+
+        var options = SendOptions()
+        options.requestKey = "flow-key"
+
+        let urlBox = LockedURLBox()
+        let task = Task {
+            try await service.authWithOAuth2(
+                provider: "google",
+                urlCallback: { url in urlBox.set(url) },
+                options: options
+            ) as RecordAuthResponse<RecordModel>
+        }
+
+        await waitForAuthFlow { transport.connectCount == 1 }
+        transport.emit(SSEEvent(event: "PB_CONNECT", id: "client-1", data: "{}"))
+        await waitForAuthFlow { urlBox.url != nil }
+
+        client.cancelRequest("flow-key")
+
+        do {
+            _ = try await task.value
+            Issue.record("Expected the flow to throw")
+        } catch let error as ClientResponseError {
+            #expect(error.isAbort)
+            #expect(error.message == "manually cancelled")
+        }
+        await waitForAuthFlow { transport.cancelCount == 1 }
+        #expect(client.pendingRequestCount == 0)
     }
 
     @Test func authWithOAuth2ForwardsOptionsAndCreateData() async throws {
@@ -490,5 +531,92 @@ struct RecordAuthTests {
 
         #expect(store.saveCount == baseline + 1)
         #expect(store.record?.rawFields["verified"]?.boolValue == true)
+    }
+
+    // MARK: - update auth store merge
+
+    @Test func updateMergesAuthStoreRecordWithPartialResponse() async throws {
+        let store = SaveSpyStore()
+        let client = makeClient(authStore: store)
+        await installFetchMock(on: client, [
+            RequestMock(
+                method: "PATCH",
+                url: "\(authBaseURL)/api/collections/users/records/rec1",
+                jsonBody: [
+                    "id": "rec1",
+                    "collectionId": "users",
+                    "collectionName": "users",
+                    "name": "New Name"
+                ]
+            )
+        ])
+
+        let current = RecordModel(
+            id: "rec1",
+            collectionId: "users",
+            collectionName: "users",
+            rawFields: [
+                "email": AnyCodable("user@example.com"),
+                "verified": AnyCodable(true),
+                "name": AnyCodable("Old Name")
+            ]
+        )
+        store.save(token: "token", record: current)
+
+        let service: RecordService<RecordModel> = client.collection("users")
+        let updated: RecordModel = try await service.update(
+            id: "rec1",
+            bodyParams: .json(["name": AnyCodable("New Name")])
+        )
+
+        #expect(updated["name"]?.stringValue == "New Name")
+
+        let stored = try #require(store.record)
+        #expect(stored["name"]?.stringValue == "New Name")
+        #expect(stored["email"]?.stringValue == "user@example.com")
+        #expect(stored["verified"]?.boolValue == true)
+    }
+
+    // MARK: - impersonate
+
+    @Test func impersonateUsesTheDecodeHook() async throws {
+        let client = makeClient()
+        let fetchMock = FetchMock()
+        await fetchMock.on(RequestMock(
+            method: "POST",
+            url: "\(authBaseURL)/api/collections/users/impersonate/rec1",
+            jsonBody: [
+                "token": "imp-token",
+                "record": ["id": "rec1", "collectionId": "users", "email": "imp@example.com"]
+            ]
+        ))
+        var options = SendOptions()
+        options.fetch = await fetchMock.customFetch()
+
+        let service = DecodeSpyService(client, collectionIdOrName: "users")
+        let impersonated = try await service.impersonate(recordId: "rec1", duration: 300, options: options)
+
+        #expect(impersonated.authStore.token == "imp-token")
+        #expect(impersonated.authStore.record?.id == "rec1")
+        #expect(impersonated.authStore.record?["email"]?.stringValue == "imp@example.com")
+        #expect(service.decodedValues.count == 1)
+    }
+
+    @Test func impersonateAppliesResponseDefaults() async throws {
+        let client = makeClient()
+        let fetchMock = FetchMock()
+        await fetchMock.on(RequestMock(
+            method: "POST",
+            url: "\(authBaseURL)/api/collections/users/impersonate/rec1",
+            jsonBody: [String: Any]()
+        ))
+        var options = SendOptions()
+        options.fetch = await fetchMock.customFetch()
+
+        let service: RecordService<RecordModel> = client.collection("users")
+        let impersonated = try await service.impersonate(recordId: "rec1", duration: 60, options: options)
+
+        #expect(impersonated.authStore.token == "")
+        #expect(impersonated.authStore.record?.id == "")
     }
 }
