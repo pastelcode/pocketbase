@@ -102,6 +102,33 @@ struct OptionsParityTests {
         #expect(!encoded.contains("skip"))
     }
 
+    @Test func serializeQueryParamsFormatsNumbersWithoutScientificNotation() {
+        let params: [String: AnyCodable] = [
+            "whole": AnyCodable(1.0),
+            "negative": AnyCodable(-123.45),
+            "small": AnyCodable(1e-6),
+            "tiny": AnyCodable(1e-7),
+            "large": AnyCodable(1e16),
+            "huge": AnyCodable(1e21),
+            "negZero": AnyCodable(-0.0),
+            "nan": AnyCodable(Double.nan),
+            "inf": AnyCodable(Double.infinity)
+        ]
+
+        let encoded = serializeQueryParams(params)
+        #expect(encoded.contains("whole=1"))
+        #expect(encoded.contains("negative=-123.45"))
+        #expect(encoded.contains("small=0.000001"))
+        #expect(encoded.contains("tiny=0.0000001"))
+        #expect(encoded.contains("large=10000000000000000"))
+        #expect(encoded.contains("huge=1000000000000000000000"))
+        #expect(encoded.contains("negZero=0"))
+        #expect(encoded.contains("nan=NaN"))
+        #expect(encoded.contains("inf=Infinity"))
+        #expect(!encoded.contains("e%2B"))
+        #expect(!encoded.contains("1e-"))
+    }
+
     @Test func typedShorthandsOverrideQuery() async throws {
         let client = PocketBase(baseURL: "http://127.0.0.1:8090")
         let recorder = RequestRecorder()

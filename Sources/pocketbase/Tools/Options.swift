@@ -308,6 +308,9 @@ extension String {
 /// Keys are sorted for deterministic output, array values produce one
 /// `key=value` pair per element, `null` values are omitted, and dates are
 /// formatted as `YYYY-MM-DD HH:MM:SS.sssZ` before percent-encoding.
+/// `Double` values are written in plain decimal notation (see
+/// `jsNumberString(_:)`), so no scientific notation or `+` signs reach the
+/// query string.
 ///
 /// - Parameter params: The parameters to serialize.
 /// - Returns: A percent-encoded query string without the leading `?`.
@@ -340,8 +343,9 @@ public func serializeQueryParams(_ params: [String: AnyCodable]) -> String {
 /// Converts a single query value to its wire representation.
 ///
 /// Returns `nil` for `null` values, which omits the pair entirely. Dates use
-/// the PocketBase query format `YYYY-MM-DD HH:MM:SS.sssZ`; arrays and
-/// dictionaries are JSON-encoded.
+/// the PocketBase query format `YYYY-MM-DD HH:MM:SS.sssZ`; numbers use plain
+/// decimal notation (no scientific notation and no trailing `.0`) and arrays
+/// and dictionaries are JSON-encoded without escaping `/`.
 ///
 /// - Parameter val: The value to convert.
 /// - Returns: The encoded value, or `nil` when the pair should be skipped.
@@ -354,7 +358,7 @@ private func prepareQueryParamValue(_ val: AnyCodable) -> String? {
     case .int(let i):
         return String(i)
     case .double(let d):
-        return String(d)
+        return jsNumberString(d)
     case .string(let s):
         return s.encodeURIComponent()
     case .date(let d):
@@ -362,11 +366,6 @@ private func prepareQueryParamValue(_ val: AnyCodable) -> String? {
             .replacingOccurrences(of: "T", with: " ")
             .encodeURIComponent()
     case .array, .dictionary:
-        let encoder = JSONEncoder()
-        if let data = try? encoder.encode(val),
-           let jsonStr = String(data: data, encoding: .utf8) {
-            return jsonStr.encodeURIComponent()
-        }
-        return nil
+        return jsonStringify(val).encodeURIComponent()
     }
 }

@@ -226,10 +226,16 @@ open class PocketBase: @unchecked Sendable {
     /// Replaces `{:name}` placeholders in a filter expression with formatted
     /// values.
     ///
-    /// Values are converted by type: strings are quoted and escaped, booleans
-    /// and numbers are inserted as-is, dates use the PocketBase ISO 8601
-    /// format, `nil` becomes `null`, and arrays/dictionaries are JSON-encoded.
-    /// Placeholders without a matching entry in `params` are left untouched.
+    /// Values are converted by type: strings are quoted and escaped like
+    /// `JSON.stringify` (double quotes, backslashes and control characters are
+    /// safe), booleans become `true`/`false`, numbers use plain decimal
+    /// notation, dates use the PocketBase ISO 8601 format, `nil` becomes
+    /// `null`, and arrays/dictionaries are JSON-encoded and quoted again as a
+    /// JSON string.
+    ///
+    /// Replacement happens in a single pass over `raw`, so placeholders inside
+    /// inserted values are left untouched. Placeholders without a matching
+    /// entry in `params` are left as-is.
     ///
     /// ```swift
     /// let filter = pb.filter("author = {:author}", params: ["author": "john"])
@@ -244,64 +250,55 @@ open class PocketBase: @unchecked Sendable {
             return raw
         }
 
-        var result = raw
-        for (key, val) in params {
-            let placeholder = "{:\(key)}"
-            guard result.contains(placeholder) else { continue }
+        let formatted = params.mapValues { stringifyFilterValue($0) }
 
-            let formattedVal: String
-            if let boolVal = val as? Bool {
-                formattedVal = String(boolVal)
-            } else if let intVal = val as? Int {
-                formattedVal = String(intVal)
-            } else if let doubleVal = val as? Double {
-                formattedVal = String(doubleVal)
-            } else if let stringVal = val as? String {
-                let escaped = stringVal.replacingOccurrences(of: "'", with: "\\'")
-                formattedVal = "'\(escaped)'"
-            } else if let dateVal = val as? Date {
-                let formatter = ISO8601DateFormatter()
-                formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                let dateStr = formatter.string(from: dateVal)
-                formattedVal = "'\(dateStr)'"
-            } else if let anyCodable = val as? AnyCodable {
-                formattedVal = formatAnyCodableForFilter(anyCodable)
-            } else if val is NSNull {
-                formattedVal = "null"
-            } else {
-                let anyCodable = AnyCodable(val)
-                formattedVal = formatAnyCodableForFilter(anyCodable)
+        var result = ""
+        var searchStart = raw.startIndex
+
+        while let openRange = raw.range(of: "{:", range: searchStart..<raw.endIndex) {
+            result += raw[searchStart..<openRange.lowerBound]
+
+            guard let closeIndex = raw[openRange.upperBound...].firstIndex(of: "}") else {
+                result += raw[openRange.lowerBound...]
+                return result
             }
 
-            result = result.replacingOccurrences(of: placeholder, with: formattedVal)
+            let key = String(raw[openRange.upperBound..<closeIndex])
+            if let value = formatted[key] {
+                result += value
+            } else {
+                result += raw[openRange.lowerBound...closeIndex]
+            }
+
+            searchStart = raw.index(after: closeIndex)
         }
 
+        result += raw[searchStart...]
         return result
     }
 
-    private func formatAnyCodableForFilter(_ anyCodable: AnyCodable) -> String {
-        switch anyCodable.value {
+    private func stringifyFilterValue(_ value: Any?) -> String {
+        guard let value = value else { return "null" }
+        if value is NSNull { return "null" }
+        return stringifyFilterValue(AnyCodable(value))
+    }
+
+    private func stringifyFilterValue(_ value: AnyCodable) -> String {
+        switch value.value {
         case .null:
             return "null"
-        case .bool(let b):
-            return String(b)
-        case .int(let i):
-            return String(i)
-        case .double(let d):
-            return String(d)
-        case .string(let s):
-            let escaped = s.replacingOccurrences(of: "'", with: "\\'")
-            return "'\(escaped)'"
-        case .date(let d):
-            return "'\(d.pocketBaseISO8601.replacingOccurrences(of: "T", with: " "))'"
+        case .bool(let bool):
+            return bool ? "true" : "false"
+        case .int(let int):
+            return String(int)
+        case .double(let double):
+            return jsNumberString(double)
+        case .string(let string):
+            return jsonEscapedString(string)
+        case .date(let date):
+            return jsonEscapedString(date.pocketBaseISO8601.replacingOccurrences(of: "T", with: " "))
         case .array, .dictionary:
-            let encoder = JSONEncoder()
-            if let data = try? encoder.encode(anyCodable),
-               let jsonStr = String(data: data, encoding: .utf8) {
-                let escaped = jsonStr.replacingOccurrences(of: "'", with: "\\'")
-                return "'\(escaped)'"
-            }
-            return "''"
+            return jsonEscapedString(jsonStringify(value))
         }
     }
 
