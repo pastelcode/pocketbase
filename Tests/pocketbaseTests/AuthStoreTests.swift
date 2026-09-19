@@ -162,6 +162,75 @@ struct AuthStoreTests {
         #expect(restored.record?["bio"] == nil)
     }
 
+    @Test func testExportToCookieNumericStringExp() throws {
+        let store = BaseAuthStore()
+        let token = dummyJWT(payload: ["id": "rec_exp", "type": "auth", "exp": "9999999999"])
+        store.save(token: token, record: nil)
+
+        #expect(store.isValid == true)
+
+        let cookie = try store.exportToCookie()
+        // 9999999999 is 2286-11-20, not the 1970 fallback.
+        #expect(cookie.contains("Expires=Sat, 20 Nov 2286"))
+        #expect(!cookie.contains("Expires=Thu, 01 Jan 1970"))
+    }
+
+    @Test func testExportToCookieSameSiteControl() throws {
+        let store = BaseAuthStore()
+        store.save(token: "token", record: nil)
+
+        // Unset options keep the Strict default.
+        #expect(try store.exportToCookie().contains("SameSite=Strict"))
+        #expect(try store.exportToCookie(options: CookieSerializeOptions(path: "/x")).contains("SameSite=Strict"))
+
+        // An explicit `.unspecified` omits the attribute.
+        let omitted = try store.exportToCookie(options: CookieSerializeOptions(sameSite: .unspecified))
+        #expect(!omitted.contains("SameSite"))
+
+        // Explicit policies override the default.
+        #expect(try store.exportToCookie(options: CookieSerializeOptions(sameSite: .lax)).contains("SameSite=Lax"))
+        #expect(try store.exportToCookie(options: CookieSerializeOptions(sameSite: CookieSameSite.none)).contains("SameSite=None"))
+    }
+
+    @Test func testLoadFromCookieRecordNullFallsBackToModel() throws {
+        let store = BaseAuthStore()
+        let payload: [String: Any] = [
+            "token": "token",
+            "record": NSNull(),
+            "model": ["id": "legacy_cookie", "collectionId": "col1", "collectionName": "users"],
+        ]
+        let jsonStr = String(data: try JSONSerialization.data(withJSONObject: payload), encoding: .utf8)!
+        let cookie = try CookieUtils.cookieSerialize(name: "pb_auth", val: jsonStr)
+
+        store.loadFromCookie(cookie)
+        #expect(store.token == "token")
+        #expect(store.record?.id == "legacy_cookie")
+    }
+
+    @Test func testOnChangeSnapshotSemantics() {
+        let store = BaseAuthStore()
+        var firstCalls = 0
+        var secondCalls = 0
+        var unsubscribeFirst: (() -> Void)?
+
+        unsubscribeFirst = store.onChange { _, _ in
+            firstCalls += 1
+            unsubscribeFirst?()
+        }
+        _ = store.onChange { _, _ in
+            secondCalls += 1
+        }
+
+        store.save(token: "t1")
+        // The already-dispatched callback is still delivered after unsubscribing.
+        #expect(firstCalls == 1)
+        #expect(secondCalls == 1)
+
+        store.save(token: "t2")
+        #expect(firstCalls == 1)
+        #expect(secondCalls == 2)
+    }
+
     @Test func testLocalAuthStore() throws {
         let suite = makeTestSuite()
         defer { suite.cleanup() }
@@ -248,6 +317,21 @@ struct AuthStoreTests {
         #expect(store.record?.id == "legacy1")
     }
 
+    @Test func testLocalAuthStoreRecordNullFallsBackToModel() throws {
+        let suite = makeTestSuite()
+        defer { suite.cleanup() }
+        let payload: [String: Any] = [
+            "token": "legacy_token",
+            "record": NSNull(),
+            "model": ["id": "legacy2", "collectionId": "col1", "collectionName": "users"],
+        ]
+        suite.defaults.set(try JSONSerialization.data(withJSONObject: payload), forKey: "auth")
+
+        let store = LocalAuthStore(storageKey: "auth", storage: suite.defaults)
+        #expect(store.token == "legacy_token")
+        #expect(store.record?.id == "legacy2")
+    }
+
     @Test func testAsyncAuthStore() async throws {
         let actor = TestSaveActor()
         let store = AsyncAuthStore(
@@ -315,6 +399,61 @@ struct AuthStoreTests {
         #expect(loaded)
         #expect(store.token == "loaded")
         #expect(store.record?.id == "loaded1")
+    }
+
+    @Test func testAsyncAuthStoreInitialObject() async throws {
+        let recorder = AuthStoreOpRecorder()
+        let store = AsyncAuthStore(
+            save: { payload in await recorder.recordSave(payload) },
+            initial: AnyCodable([
+                "token": AnyCodable("obj_token"),
+                "record": AnyCodable([
+                    "id": AnyCodable("obj1"),
+                    "collectionId": AnyCodable("col1"),
+                    "collectionName": AnyCodable("users"),
+                ]),
+            ])
+        )
+
+        let loaded = await waitUntil { await recorder.saves().count >= 1 }
+        #expect(loaded)
+        #expect(store.token == "obj_token")
+        #expect(store.record?.id == "obj1")
+    }
+
+    @Test func testAsyncAuthStoreInitialObjectRecordNullFallsBackToModel() async throws {
+        let recorder = AuthStoreOpRecorder()
+        let store = AsyncAuthStore(
+            save: { payload in await recorder.recordSave(payload) },
+            initial: AnyCodable([
+                "token": AnyCodable("obj_legacy"),
+                "record": AnyCodable(NSNull()),
+                "model": AnyCodable(["id": AnyCodable("legacy3")]),
+            ])
+        )
+
+        let loaded = await waitUntil { await recorder.saves().count >= 1 }
+        #expect(loaded)
+        #expect(store.token == "obj_legacy")
+        #expect(store.record?.id == "legacy3")
+    }
+
+    @Test func testAsyncAuthStoreInitialObjectLoader() async throws {
+        let recorder = AuthStoreOpRecorder()
+        let store = AsyncAuthStore(
+            save: { payload in await recorder.recordSave(payload) },
+            initialLoader: {
+                return AnyCodable([
+                    "token": AnyCodable("obj_loaded"),
+                    "record": AnyCodable(["id": AnyCodable("obj_loaded1")]),
+                ])
+            }
+        )
+
+        let loaded = await waitUntil { await recorder.saves().count >= 1 }
+        #expect(loaded)
+        #expect(store.token == "obj_loaded")
+        #expect(store.record?.id == "obj_loaded1")
     }
 
     @Test func testAsyncAuthStoreInitialLoaderErrorLeavesStoreEmpty() async throws {

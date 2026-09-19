@@ -28,12 +28,13 @@ open class AsyncAuthStore: BaseAuthStore, @unchecked Sendable {
     public typealias AsyncSaveFunc = @Sendable (String) async throws -> Void
     /// A closure that asynchronously clears the persisted auth payload.
     public typealias AsyncClearFunc = @Sendable () async throws -> Void
-    /// A closure that asynchronously loads the initial JSON auth payload.
+    /// A closure that asynchronously loads the initial auth payload.
     ///
-    /// The payload uses the same format as ``save(token:record:)`` receives: a
-    /// JSON string such as `{"token":"...","record":{...}}`. Return `nil` or
-    /// throw to start with an empty store.
-    public typealias AsyncInitialLoader = @Sendable () async throws -> String?
+    /// Return either a JSON string such as `{"token":"...","record":{...}}`
+    /// (the same format ``save(token:record:)`` receives) or an object with
+    /// `token` and `record` (or legacy `model`) keys. Return `nil` or throw to
+    /// start with an empty store.
+    public typealias AsyncInitialLoader = @Sendable () async throws -> AnyCodable?
 
     private let saveFunc: AsyncSaveFunc
     private let clearFunc: AsyncClearFunc?
@@ -90,13 +91,13 @@ open class AsyncAuthStore: BaseAuthStore, @unchecked Sendable {
     ///     every save.
     ///   - clear: Called on ``clear()``. When `nil`, the store enqueues
     ///     `save("")` instead. Defaults to `nil`.
-    ///   - initial: A JSON payload used to seed the store. It runs as the first
-    ///     queued operation and is persisted again through the `save` closure.
-    ///     Defaults to `nil`.
+    ///   - initial: A JSON string or object payload used to seed the store. It
+    ///     runs as the first queued operation and is persisted again through the
+    ///     `save` closure. Defaults to `nil`.
     public init(
         save: @escaping AsyncSaveFunc,
         clear: AsyncClearFunc? = nil,
-        initial: String? = nil
+        initial: AnyCodable? = nil
     ) {
         self.saveFunc = save
         self.clearFunc = clear
@@ -119,8 +120,8 @@ open class AsyncAuthStore: BaseAuthStore, @unchecked Sendable {
     ///     every save.
     ///   - clear: Called on ``clear()``. When `nil`, the store enqueues
     ///     `save("")` instead. Defaults to `nil`.
-    ///   - initialLoader: An async closure returning the JSON payload used to
-    ///     seed the store.
+    ///   - initialLoader: An async closure returning the JSON string or object
+    ///     payload used to seed the store.
     public init(
         save: @escaping AsyncSaveFunc,
         clear: AsyncClearFunc? = nil,
@@ -179,17 +180,36 @@ open class AsyncAuthStore: BaseAuthStore, @unchecked Sendable {
         }
     }
 
-    /// Seeds the store from an encoded JSON payload and persists it.
-    private func loadInitial(_ payload: String?) {
-        guard let payload = payload, !payload.isEmpty,
-              let data = payload.data(using: .utf8),
-              let jsonDict = try? JSONDecoder().decode([String: AnyCodable].self, from: data) else {
+    /// Seeds the store from an encoded JSON string or an object payload.
+    private func loadInitial(_ payload: AnyCodable?) {
+        guard let payload = payload else { return }
+
+        let dict: [String: AnyCodable]
+        switch payload.value {
+        case .string(let json):
+            guard !json.isEmpty,
+                  let data = json.data(using: .utf8),
+                  let parsed = try? JSONDecoder().decode([String: AnyCodable].self, from: data) else {
+                return
+            }
+            dict = parsed
+        case .dictionary(let parsed):
+            dict = parsed
+        case .null, .bool, .int, .double, .date, .array:
             return
         }
 
-        let tokenStr = jsonDict["token"]?.value.string ?? ""
+        let tokenStr = dict["token"]?.value.string ?? ""
         var recordModel: RecordModel? = nil
-        if let recVal = jsonDict["record"] ?? jsonDict["model"] {
+        // An explicit `record: null` falls back to `model`, like the JS `||`.
+        var recVal = dict["record"]
+        if recVal?.isNull == true {
+            recVal = nil
+        }
+        if recVal == nil {
+            recVal = dict["model"]
+        }
+        if let recVal = recVal {
             if let recData = try? JSONEncoder().encode(recVal) {
                 recordModel = try? JSONDecoder().decode(RecordModel.self, from: recData)
             }

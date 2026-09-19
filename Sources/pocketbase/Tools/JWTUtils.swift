@@ -6,6 +6,10 @@ import Foundation
 /// signature. Use them only for client-side expiration and claim inspection.
 public struct JWTUtils: Sendable {
     /// Returns JWT token's payload data without validating signature.
+    ///
+    /// - Note: Base64url `-`/`_` characters are accepted. This is more
+    ///   permissive than the JavaScript SDK, whose `atob`-based decoder throws
+    ///   on them and returns an empty payload instead.
     public static func getTokenPayload(_ token: String) -> [String: AnyCodable] {
         guard !token.isEmpty else { return [:] }
         let parts = token.components(separatedBy: ".")

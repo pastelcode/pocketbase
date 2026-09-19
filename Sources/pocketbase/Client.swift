@@ -28,6 +28,12 @@ open class PocketBase: @unchecked Sendable {
     /// The auth store used to persist authentication for this client.
     ///
     /// Defaults to a ``LocalAuthStore`` when none is provided at initialization.
+    ///
+    /// - Note: The stores operate everywhere, but the reference SDK only falls
+    ///   back to an in-memory store in Deno; in Node its `LocalAuthStore`
+    ///   degrades to memory because there is no `localStorage`. On Swift server
+    ///   platforms `UserDefaults` persists to disk, so pass an explicit
+    ///   ``BaseAuthStore`` when the auth state must not survive the process.
     open var authStore: BaseAuthStore
 
     /// Service for managing collection schemas.

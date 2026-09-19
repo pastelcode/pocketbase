@@ -77,13 +77,16 @@ public struct AnyCodable: Codable, Equatable, Hashable, Sendable, CustomStringCo
         return nil
     }
 
+    /// Whether the wrapped value is JSON `null`.
+    var isNull: Bool { value == .null }
+
     /// Creates a value from an arbitrary input.
     ///
     /// Supported inputs are `AnyCodable`, `Bool`, `Int`, `Double`, `String`,
-    /// `Date`, `[Any]`, and `[String: Any]`. Any other `Encodable` value is
-    /// encoded and decoded back into a JSON-compatible representation, `nil`
-    /// maps to `.null`, and unsupported values fall back to their
-    /// `String(describing:)` text.
+    /// `Date`, `[Any]`, and `[String: Any]`. `nil` and `NSNull` map to
+    /// ``AnySendable/null``. Any other `Encodable` value is encoded and decoded
+    /// back into a JSON-compatible representation, and unsupported values fall
+    /// back to their `String(describing:)` text.
     ///
     /// - Parameter value: The value to wrap.
     public init(_ value: Any?) {
@@ -94,6 +97,8 @@ public struct AnyCodable: Codable, Equatable, Hashable, Sendable, CustomStringCo
 
         if let anyCodable = value as? AnyCodable {
             self = anyCodable
+        } else if value is NSNull {
+            self.value = .null
         } else if let boolVal = value as? Bool {
             self.value = .bool(boolVal)
         } else if let intVal = value as? Int {

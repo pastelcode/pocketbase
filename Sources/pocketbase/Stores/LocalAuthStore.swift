@@ -18,9 +18,11 @@ import Foundation
 /// - Important: `UserDefaults` is not encrypted. For production, prefer
 ///   ``AsyncAuthStore`` backed by the Keychain so the token is not readable
 ///   from a plain-text app container or backup.
-/// - Note: `UserDefaults` has no reliable cross-process change notification on
-///   iOS and Android, so writes made by another process are reflected on the
-///   next read but do not fire ``BaseAuthStore/onChange(fireImmediately:callback:)``.
+/// - Note: Only the instance that performed a write emits
+///   ``BaseAuthStore/onChange(fireImmediately:callback:)``. Another instance
+///   (in the same process or not) sees the write on its next read, but
+///   `UserDefaults` has no reliable cross-process change notification on iOS
+///   and Android, so that instance does not emit a change event either.
 open class LocalAuthStore: BaseAuthStore, @unchecked Sendable {
     /// The `UserDefaults` key used to persist the auth state.
     public let storageKey: String
@@ -55,10 +57,14 @@ open class LocalAuthStore: BaseAuthStore, @unchecked Sendable {
     /// The record persisted under ``storageKey``.
     ///
     /// Returns `nil` when the storage is empty or corrupted. The legacy
-    /// `model` key is accepted for parity with the reference SDK.
+    /// `model` key is accepted for parity with the reference SDK, including
+    /// when `record` is explicitly `null`.
     open override var record: RecordModel? {
-        guard let stored = storageGet(storageKey),
-              let recordValue = stored["record"] ?? stored["model"],
+        guard let stored = storageGet(storageKey) else { return nil }
+
+        // An explicit `record: null` falls back to `model`, like the JS `||`.
+        let rawRecord = stored["record"] is NSNull ? nil : stored["record"]
+        guard let recordValue = rawRecord ?? stored["model"],
               JSONSerialization.isValidJSONObject(recordValue),
               let data = try? JSONSerialization.data(withJSONObject: recordValue) else {
             return nil

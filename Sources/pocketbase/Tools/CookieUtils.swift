@@ -37,6 +37,10 @@ public enum CookieSerializeError: Error, CustomStringConvertible, Equatable, Sen
 }
 
 /// The `SameSite` attribute of a cookie.
+///
+/// - Note: Because the attribute is used in optional contexts, a bare `.none`
+///   there resolves to `Optional.none` (unset). Write `CookieSameSite.none`
+///   explicitly to request `SameSite=None`.
 public enum CookieSameSite: Sendable, Equatable {
     /// The `SameSite` attribute is omitted.
     case unspecified
@@ -78,8 +82,13 @@ public struct CookieSerializeOptions: Sendable {
     public var secure: Bool?
     /// The cookie priority (`"low"`, `"medium"` or `"high"`).
     public var priority: String?
-    /// The `SameSite` policy. Defaults to ``CookieSameSite/unspecified``.
-    public var sameSite: CookieSameSite
+    /// The `SameSite` policy.
+    ///
+    /// `nil` leaves the attribute unset. When serializing directly that omits
+    /// it; ``BaseAuthStore/exportToCookie(options:key:)`` instead keeps its
+    /// `Strict` default. Pass ``CookieSameSite/unspecified`` to omit the
+    /// attribute explicitly when overriding the export defaults.
+    public var sameSite: CookieSameSite?
 
     /// Creates a set of cookie attributes.
     ///
@@ -92,7 +101,7 @@ public struct CookieSerializeOptions: Sendable {
     ///   - httpOnly: Whether the browser should only expose the cookie over HTTP.
     ///   - secure: Whether the cookie should only be sent over HTTPS.
     ///   - priority: The cookie priority (`"low"`, `"medium"` or `"high"`).
-    ///   - sameSite: The `SameSite` policy.
+    ///   - sameSite: The `SameSite` policy. Defaults to `nil` (unset).
     public init(
         encode: (@Sendable (String) -> String)? = nil,
         maxAge: Double? = nil,
@@ -102,7 +111,7 @@ public struct CookieSerializeOptions: Sendable {
         httpOnly: Bool? = nil,
         secure: Bool? = nil,
         priority: String? = nil,
-        sameSite: CookieSameSite = .unspecified
+        sameSite: CookieSameSite? = nil
     ) {
         self.encode = encode
         self.maxAge = maxAge
@@ -280,11 +289,13 @@ public struct CookieUtils: Sendable {
             }
         }
 
-        switch opt.sameSite {
-        case .unspecified: break
-        case .strict: result += "; SameSite=Strict"
-        case .lax: result += "; SameSite=Lax"
-        case .none: result += "; SameSite=None"
+        if let sameSite = opt.sameSite {
+            switch sameSite {
+            case .unspecified: break
+            case .strict: result += "; SameSite=Strict"
+            case .lax: result += "; SameSite=Lax"
+            case .none: result += "; SameSite=None"
+            }
         }
 
         return result

@@ -132,6 +132,11 @@ open class BaseAuthStore: @unchecked Sendable {
     /// state. Override this method in a subclass to emit change events to
     /// observers without performing a full ``save(token:record:)``; the
     /// override should call `super` to keep invoking the registered callbacks.
+    ///
+    /// - Note: The observer list is snapshotted before dispatch and the
+    ///   callbacks run outside the store lock, so unsubscribing (or adding a
+    ///   callback) during a change does not affect the callbacks already being
+    ///   delivered.
     open func triggerChange() {
         lock.lock()
         let callbacks = Array(_onChangeCallbacks.values)
@@ -157,7 +162,15 @@ open class BaseAuthStore: @unchecked Sendable {
         if let jsonDict = try? decoder.decode([String: AnyCodable].self, from: data) {
             let tokenStr = jsonDict["token"]?.value.string ?? ""
             var recordModel: RecordModel? = nil
-            if let recVal = jsonDict["record"] ?? jsonDict["model"] {
+            // An explicit `record: null` falls back to `model`, like the JS `||`.
+            var recVal = jsonDict["record"]
+            if recVal?.isNull == true {
+                recVal = nil
+            }
+            if recVal == nil {
+                recVal = jsonDict["model"]
+            }
+            if let recVal = recVal {
                 if let recData = try? JSONEncoder().encode(recVal) {
                     recordModel = try? decoder.decode(RecordModel.self, from: recData)
                 }
@@ -185,19 +198,9 @@ open class BaseAuthStore: @unchecked Sendable {
             sameSite: .strict
         )
 
-        let payload = JWTUtils.getTokenPayload(token)
-        if let expVal = payload["exp"] {
-            let expDouble: Double?
-            switch expVal.value {
-            case .int(let i): expDouble = Double(i)
-            case .double(let d): expDouble = d
-            default: expDouble = nil
-            }
-            if let exp = expDouble {
-                defaultOptions.expires = Date(timeIntervalSince1970: exp)
-            } else {
-                defaultOptions.expires = Date(timeIntervalSince1970: 0)
-            }
+        // Numeric-string `exp` claims are accepted, matching isValid.
+        if let exp = JWTUtils.getExpirationTimestamp(token) {
+            defaultOptions.expires = Date(timeIntervalSince1970: exp)
         } else {
             defaultOptions.expires = Date(timeIntervalSince1970: 0)
         }
@@ -212,7 +215,7 @@ open class BaseAuthStore: @unchecked Sendable {
             if let httpOnly = userOpt.httpOnly { defaultOptions.httpOnly = httpOnly }
             if let secure = userOpt.secure { defaultOptions.secure = secure }
             if let priority = userOpt.priority { defaultOptions.priority = priority }
-            if userOpt.sameSite != .unspecified { defaultOptions.sameSite = userOpt.sameSite }
+            if let sameSite = userOpt.sameSite { defaultOptions.sameSite = sameSite }
         }
 
         let encoder = JSONEncoder()
@@ -256,6 +259,11 @@ open class BaseAuthStore: @unchecked Sendable {
     }
 
     /// Register a callback function that will be called on store change.
+    ///
+    /// Callbacks are dispatched from a snapshot of the registered observers and
+    /// run outside the store lock: a callback that unsubscribes itself still
+    /// receives the change already being dispatched, and a callback registered
+    /// during dispatch runs on the next change.
     ///
     /// - Parameters:
     ///   - fireImmediately: When `true`, invokes `callback` right after
