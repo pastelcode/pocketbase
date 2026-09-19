@@ -194,6 +194,16 @@ let batchResults = try await batch.send()
 
 ---
 
+## 🔁 Parity Notes
+
+The SDK targets feature parity with the reference JavaScript SDK. A few platform differences are intentional:
+
+- **Cancellation**: cancellation aborts the wrapping Swift `Task`. A `CustomFetch` closure is not handed an `AbortSignal`, so a closure that ignores task cancellation keeps running; the default `URLSession` transport is fully cancellable. Requests are registered for auto-cancellation before `beforeSend` runs, so a slow hook cannot invert same-key supersession.
+- **Legacy options**: the JavaScript-only `$autoCancel` / `$cancelKey` options (and their query-parameter forms) are replaced by `SendOptions.autoCancel` and `SendOptions.requestKey`; `params` is replaced by `SendOptions.query`; and `signal` / `AbortSignal` is not exposed. Abort the wrapping task with `cancelRequest(_:)` / `cancelAllRequests()` instead.
+- **Hooks**: `beforeSend` must return `{ url, options }`; the deprecated options-only return shape is not supported.
+
+---
+
 ## 🖥️ Server-Side Rendering (Vapor / Swift Server)
 
 Cookies are only used for the SSR handoff between a browser and your Swift server: `loadFromCookie` restores the auth state from the request's `Cookie` header, and `exportToCookie` produces the `Set-Cookie` value returned to the browser. Native iOS/Android clients don't need cookies — the token is sent as an `Authorization` header on every request, including realtime.

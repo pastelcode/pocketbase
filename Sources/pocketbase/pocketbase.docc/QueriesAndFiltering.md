@@ -76,3 +76,21 @@ options.autoCancel = false    // only this request
 ```
 
 A cancelled request fails with ``ClientResponseError`` where ``ClientResponseError/isAbort`` is `true`.
+
+The request is registered before ``PocketBase/beforeSend`` runs, matching the reference SDK. A slow or suspended hook therefore neither delays superseding a same-key request nor prevents ``PocketBase/cancelRequest(_:)`` from interrupting a request whose hook is still running. The key is resolved from the options as the caller passed them; a hook that rewrites ``SendOptions/requestKey`` or ``SendOptions/method`` does not change where the request was registered.
+
+### Custom fetch and cancellation limits
+
+Cancellation cancels the wrapping Swift `Task`, and only that. A ``CustomFetch`` closure is not handed an `AbortSignal`, so a closure that ignores task cancellation keeps running after ``PocketBase/cancelRequest(_:)`` or a same-key supersession. Cooperate by checking `Task.isCancelled` or using cancellation-aware APIs such as `URLSession`, which the default transport relies on.
+
+### Legacy options
+
+The reference JavaScript SDK's legacy options are intentionally not exposed. Use the Swift equivalents instead:
+
+| JavaScript SDK | Swift SDK |
+| --- | --- |
+| `$autoCancel: false` (option or query parameter) | ``SendOptions/autoCancel`` = `false` |
+| `$cancelKey` (option or query parameter) | ``SendOptions/requestKey`` |
+| `params` | ``SendOptions/query`` |
+| `signal` / `AbortSignal` | none — cancellation is expressed with `Task` cancellation and ``PocketBase/cancelRequest(_:)`` / ``PocketBase/cancelAllRequests()`` |
+

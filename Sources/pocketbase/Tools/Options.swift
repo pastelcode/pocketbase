@@ -8,6 +8,14 @@ import FoundationNetworking
 /// The closure receives the fully prepared request and returns the raw
 /// response body together with its response. Use it to mock, intercept, or
 /// re-route requests issued by ``PocketBase``.
+///
+/// - Important: Cancellation only cancels the wrapping Swift `Task`; the
+///   closure is not handed an `AbortSignal`. A closure that ignores task
+///   cancellation — for example one blocked in synchronous work — keeps
+///   running after ``PocketBase/cancelRequest(_:)`` or a same-key request
+///   supersedes it. Cooperate by checking `Task.isCancelled` or using
+///   cancellation-aware APIs such as `URLSession`, which the default transport
+///   relies on.
 public typealias CustomFetch = @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
 /// A file payload for multipart form submissions.
@@ -46,6 +54,15 @@ public struct FileParam: Equatable, Sendable, Codable {
 /// options.sort = "-created"
 /// options.query["perPage"] = 50
 /// ```
+///
+/// ## Legacy options
+///
+/// The reference JavaScript SDK accepts some legacy options that are replaced
+/// here: `$autoCancel`/`$cancelKey` (option or query parameter) map to
+/// ``autoCancel``/``requestKey``, `params` maps to ``query``, and
+/// `signal`/`AbortSignal` is not exposed — cancellation is expressed with
+/// `Task` cancellation and ``PocketBase/cancelRequest(_:)``. See
+/// <doc:QueriesAndFiltering> for details.
 public struct SendOptions: Sendable {
     /// The HTTP method for the request.
     ///
@@ -89,13 +106,23 @@ public struct SendOptions: Sendable {
     /// Explicit key used for auto-cancellation.
     ///
     /// When `nil`, the client derives a key from the request method and path.
+    ///
+    /// - Note: Replaces the reference SDK's legacy `$cancelKey` option and
+    ///   `$cancelKey` query parameter.
     public var requestKey: String?
     /// Set to `false` to exclude this request from auto-cancellation.
     ///
     /// When `nil` (the default) the request participates in auto-cancellation
     /// normally. See `PocketBase.autoCancellation(_:)` for the global toggle.
+    ///
+    /// - Note: Replaces the reference SDK's legacy `$autoCancel` option and
+    ///   `$autoCancel` query parameter.
     public var autoCancel: Bool?
     /// Custom fetch implementation used instead of the default transport.
+    ///
+    /// Cancellation only cancels the wrapping `Task`; the closure is not handed
+    /// an `AbortSignal` and may keep running if it ignores cancellation. See
+    /// ``CustomFetch``.
     public var fetch: CustomFetch?
     /// Whether the request bypasses the auth auto-refresh hook.
     ///

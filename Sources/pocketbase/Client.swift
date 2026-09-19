@@ -373,6 +373,10 @@ open class PocketBase: @unchecked Sendable {
     /// registers the request for auto-cancellation, and maps HTTP error
     /// statuses to ``ClientResponseError``.
     ///
+    /// Cancellation aborts the wrapping Swift `Task` and only that: a
+    /// ``CustomFetch`` closure is not handed an `AbortSignal`, so a closure
+    /// that ignores task cancellation keeps running. See ``CustomFetch``.
+    ///
     /// - Parameters:
     ///   - path: The API path, relative to ``baseURL``.
     ///   - options: The request options.
@@ -393,6 +397,12 @@ open class PocketBase: @unchecked Sendable {
     /// this method, so it is the override point for customizing the send
     /// pipeline.
     ///
+    /// The request is registered for auto-cancellation before ``beforeSend``
+    /// runs, matching the reference SDK, so a suspended hook does not delay
+    /// supersession and ``cancelRequest(_:)`` can interrupt a request whose
+    /// hook is still running. Cancellation cancels the wrapping `Task` only;
+    /// see ``CustomFetch`` for the limits that places on custom transports.
+    ///
     /// - Parameters:
     ///   - path: The API path, relative to ``baseURL``.
     ///   - options: The request options.
@@ -401,7 +411,22 @@ open class PocketBase: @unchecked Sendable {
     ///   responds with an error status.
     open func sendRawResponse(path: String, options: SendOptions) async throws -> (Data, URL) {
         var initOptions = initSendOptions(path: path, options: options)
+
+        // Resolve the cancellation key from the pre-hook options and register
+        // the request before `beforeSend` runs, matching the reference SDK
+        // (`initSendOptions` registers synchronously). Doing this after the
+        // hook would let a suspended `beforeSend` — such as the one installed
+        // by ``AutoRefresh`` — delay supersession and make ``cancelRequest(_:)``
+        // a no-op while the hook is in flight. The key deliberately stays the
+        // pre-hook value: a superseding request has already cancelled this
+        // handle, and the cancellation handle invokes its cancel block
+        // immediately when it is registered after cancellation.
         let cancellationKey = autoCancellationKey(path: path, options: initOptions)
+        let handle = beginRequest(key: cancellationKey)
+        defer {
+            endRequest(key: cancellationKey, handle: handle)
+        }
+
         var urlString = buildURL(path: path)
 
         if let before = beforeSend {
@@ -454,11 +479,6 @@ open class PocketBase: @unchecked Sendable {
                     message: "Failed to encode request body: \(error.localizedDescription)"
                 )
             }
-        }
-
-        let handle = beginRequest(key: cancellationKey)
-        defer {
-            endRequest(key: cancellationKey, handle: handle)
         }
 
         // Run the request in a cancellable task so both key-based cancellation
