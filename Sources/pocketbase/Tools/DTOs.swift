@@ -953,6 +953,17 @@ public struct HealthCheckResponse: Codable, Equatable, Sendable {
     }
 }
 
+/// Response returned by the Apple client secret generation endpoint.
+public struct AppleClientSecret: Codable, Equatable, Sendable {
+    /// The generated Apple OAuth2 client secret.
+    public var secret: String
+
+    /// Creates an Apple client secret response with the given value.
+    public init(secret: String = "") {
+        self.secret = secret
+    }
+}
+
 /// Response returned by record authentication and refresh endpoints.
 public struct RecordAuthResponse<T: Codable & Sendable>: Codable, Sendable {
     /// The authenticated record.

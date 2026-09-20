@@ -268,4 +268,134 @@ struct OptionsParityTests {
         let url = try #require(recorder.lastURL)
         #expect(url.contains("a%2Fb"))
     }
+
+    // MARK: - Admin service option precedence
+
+    @Test func backupServiceCallerMethodAndBodyOverrideDefaults() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let recorder = RequestRecorder()
+        let fetch = recorder.fetch { _ in [:] }
+
+        var options = SendOptions(method: "PUT", fetch: fetch)
+        options.body = .json(["name": AnyCodable("caller")])
+
+        _ = try await client.backups.create(basename: "param", options: options)
+
+        #expect(recorder.lastMethod == "PUT")
+        let body = try #require(recorder.lastBody)
+        let json = String(decoding: body, as: UTF8.self)
+        #expect(json.contains("caller"))
+        #expect(!json.contains("param"))
+    }
+
+    @Test func backupDownloadURLPercentEncodesReservedCharacters() {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let url = client.backups.getDownloadURL(token: "tok/en?x&y=z+1", key: "back up/2026?x&y=z+1")
+
+        #expect(url == "http://127.0.0.1:8090/api/backups/back%20up%2F2026%3Fx%26y%3Dz%2B1?token=tok%2Fen%3Fx%26y%3Dz%2B1")
+    }
+
+    @Test func settingsServiceCallerOptionsOverrideDefaults() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let recorder = RequestRecorder()
+        let fetch = recorder.fetch { _ in ["secret": "generated"] }
+
+        var options = SendOptions(method: "PUT", fetch: fetch)
+        options.query["test"] = AnyCodable("1")
+        options.body = .json(["clientId": AnyCodable("caller")])
+
+        let secret: AppleClientSecret = try await client.settings.generateAppleClientSecret(
+            clientId: "param",
+            teamId: "team",
+            keyId: "key",
+            privateKey: "pem",
+            duration: 60,
+            options: options
+        )
+
+        #expect(secret.secret == "generated")
+        #expect(recorder.lastMethod == "PUT")
+        let url = try #require(recorder.lastURL)
+        #expect(url.contains("test=1"))
+        let body = try #require(recorder.lastBody)
+        let json = String(decoding: body, as: UTF8.self)
+        #expect(json.contains("caller"))
+        #expect(!json.contains("param"))
+    }
+
+    @Test func logServiceCallerOptionsOverrideDefaults() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let recorder = RequestRecorder()
+        let fetch = recorder.fetch { _ in listResultJSON() }
+
+        var options = SendOptions(method: "PUT", fetch: fetch)
+        options.query["page"] = AnyCodable(7)
+        options.query["perPage"] = AnyCodable(99)
+
+        _ = try await client.logs.getList(page: 1, perPage: 30, options: options)
+
+        #expect(recorder.lastMethod == "PUT")
+        let url = try #require(recorder.lastURL)
+        #expect(url.contains("page=7"))
+        #expect(url.contains("perPage=99"))
+        #expect(!url.contains("page=1"))
+        #expect(!url.contains("perPage=30"))
+    }
+
+    @Test func logServiceTruncateCallerMethodOverridesDefault() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let recorder = RequestRecorder()
+        let fetch = recorder.fetch { _ in [:] }
+
+        let options = SendOptions(method: "GET", fetch: fetch)
+        _ = try await client.logs.truncate(options: options)
+
+        #expect(recorder.lastMethod == "GET")
+    }
+
+    @Test func cronServiceCallerOptionsOverrideDefaults() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let recorder = RequestRecorder()
+        let fetch = recorder.fetch { _ in [:] }
+
+        var options = SendOptions(method: "GET", fetch: fetch)
+        options.query["custom"] = AnyCodable("x")
+
+        _ = try await client.crons.run(jobId: "job/1", options: options)
+
+        #expect(recorder.lastMethod == "GET")
+        let url = try #require(recorder.lastURL)
+        #expect(url.contains("job%2F1"))
+        #expect(url.contains("custom=x"))
+    }
+
+    @Test func healthServiceCallerMethodOverridesDefault() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let recorder = RequestRecorder()
+        let fetch = recorder.fetch { _ in ["code": 200, "message": "ok", "data": [String: Any]()] }
+
+        let options = SendOptions(method: "POST", fetch: fetch)
+        _ = try await client.health.check(options: options)
+
+        #expect(recorder.lastMethod == "POST")
+    }
+
+    @Test func sqlServiceCallerMethodAndBodyOverrideDefaults() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let recorder = RequestRecorder()
+        let fetch = recorder.fetch { _ in
+            ["execTime": 0.1, "affectedRows": 0, "columns": [Any](), "rows": [Any]()]
+        }
+
+        var options = SendOptions(method: "GET", fetch: fetch)
+        options.body = .json(["query": AnyCodable("SELECT caller")])
+
+        _ = try await client.sql.run(query: "SELECT param", options: options)
+
+        #expect(recorder.lastMethod == "GET")
+        let body = try #require(recorder.lastBody)
+        let json = String(decoding: body, as: UTF8.self)
+        #expect(json.contains("caller"))
+        #expect(!json.contains("param"))
+    }
 }

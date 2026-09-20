@@ -6,6 +6,8 @@ import Foundation
 open class SQLService: BaseService, @unchecked Sendable {
     /// Executes a raw SQL statement.
     ///
+    /// This operation is allowed only for superusers.
+    ///
     /// - Parameter query: The SQL statement to run.
     /// - Parameter options: Additional send options. The `POST` method and JSON body are applied by default.
     /// - Returns: The execution result, including columns and rows for select statements.

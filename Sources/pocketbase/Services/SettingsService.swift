@@ -70,7 +70,7 @@ open class SettingsService: BaseService, @unchecked Sendable {
     /// - Parameter privateKey: The PEM-encoded private key contents.
     /// - Parameter duration: The secret lifetime in seconds.
     /// - Parameter options: Additional send options. The `POST` method and JSON body are applied by default.
-    /// - Returns: The generated client secret payload.
+    /// - Returns: The generated client secret response.
     /// - Throws: A ``ClientResponseError`` when the request fails.
     open func generateAppleClientSecret(
         clientId: String,
@@ -79,7 +79,7 @@ open class SettingsService: BaseService, @unchecked Sendable {
         privateKey: String,
         duration: Int,
         options: SendOptions? = nil
-    ) async throws -> [String: String] {
+    ) async throws -> AppleClientSecret {
         var opt = options ?? SendOptions()
         opt.applyDefaultMethod("POST")
         opt.applyDefaultBody(.json([

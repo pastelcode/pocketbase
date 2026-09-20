@@ -32,6 +32,9 @@ open class BackupService: BaseService, @unchecked Sendable {
 
     /// Uploads a backup archive.
     ///
+    /// The multipart body must contain the backup file under the `file`
+    /// field name, matching the reference SDK.
+    ///
     /// - Parameter bodyParams: The multipart form data containing the backup file.
     /// - Parameter options: Additional send options. The `POST` method is applied by default.
     /// - Returns: `true` when the upload succeeds.
@@ -70,18 +73,6 @@ open class BackupService: BaseService, @unchecked Sendable {
         let encodedKey = key.encodeURIComponent()
         let _: Data = try await client.sendRaw(path: "/api/backups/\(encodedKey)/restore", options: opt)
         return true
-    }
-
-    /// Builds the download URL of a backup archive.
-    ///
-    /// - Parameter token: A superuser token with access to the backups API.
-    /// - Parameter key: The backup file key or name.
-    /// - Returns: The backup download URL.
-    ///
-    /// - Important: Deprecated. Use ``getDownloadURL(token:key:)`` instead.
-    @available(*, deprecated, message: "Use getDownloadURL instead.")
-    open func getDownloadUrl(token: String, key: String) -> String {
-        return getDownloadURL(token: token, key: key)
     }
 
     /// Builds the download URL of a backup archive.

@@ -357,6 +357,13 @@ struct DTOTests {
         #expect(try roundTrip(response) == response)
     }
 
+    @Test func appleClientSecretDecodesAndRoundTrips() throws {
+        let secret: AppleClientSecret = try decodeDTO(#"{"secret":"header.payload.signature"}"#)
+        #expect(secret.secret == "header.payload.signature")
+        #expect(AppleClientSecret().secret == "")
+        #expect(try roundTrip(secret) == secret)
+    }
+
     @Test func healthCheckResponseDefaultsToZeroCode() {
         #expect(HealthCheckResponse().code == 0)
         #expect(HealthCheckResponse(message: "ok").code == 0)
