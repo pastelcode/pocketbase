@@ -142,6 +142,25 @@ struct SendPipelineTests {
         #expect(header?.hasPrefix("multipart/form-data; boundary=") == true)
     }
 
+    @Test func formExplicitContentTypeIsPreserved() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let capture = RequestCapture()
+        let fetch: CustomFetch = { request in
+            capture.store(request)
+            return (Data("{}".utf8), httpResponse(for: request))
+        }
+
+        var options = SendOptions()
+        options.fetch = fetch
+        options.headers["Content-Type"] = "multipart/form-data; boundary=custom"
+        options.body = .form([
+            "file": .file(FileParam(filename: "a.txt", data: Data("hi".utf8)))
+        ])
+
+        _ = try await client.sendRaw(path: "/api/things", options: options)
+        #expect(capture.last?.value(forHTTPHeaderField: "Content-Type") == "multipart/form-data; boundary=custom")
+    }
+
     @Test func formArrayAppendsRepeatedParts() async throws {
         let client = PocketBase(baseURL: "http://127.0.0.1:8090")
         let capture = RequestCapture()

@@ -59,7 +59,7 @@ struct BatchServiceTests {
         return try #require(requests?.first?.dictionaryValue)
     }
 
-    // MARK: - Wire format (fixtures generated from the JavaScript SDK)
+    // MARK: - Wire format (mirrors the JavaScript SDK output)
 
     @Test func mixedArrayMatchesJSReferenceWireFormat() async throws {
         let capture = BatchRequestCapture()

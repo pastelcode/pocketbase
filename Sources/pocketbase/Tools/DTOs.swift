@@ -193,6 +193,9 @@ public struct RecordModel: BaseModel, Equatable, Sendable {
 
     /// Encodes the system fields together with the dynamic fields in ``rawFields``.
     ///
+    /// System fields take precedence: bag entries with a reserved key are
+    /// skipped, so re-encoding cannot emit duplicate JSON keys.
+    ///
     /// - Throws: An error if a dynamic value cannot be encoded.
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -204,7 +207,7 @@ public struct RecordModel: BaseModel, Equatable, Sendable {
         try container.encodeIfPresent(expand, forKey: .expand)
 
         var dynamicContainer = encoder.container(keyedBy: DynamicCodingKey.self)
-        for (key, value) in rawFields {
+        for (key, value) in rawFields where CodingKeys(stringValue: key) == nil {
             if let codingKey = DynamicCodingKey(stringValue: key) {
                 try dynamicContainer.encode(value, forKey: codingKey)
             }
@@ -938,7 +941,12 @@ public struct HealthCheckResponse: Codable, Equatable, Sendable {
     public var data: [String: AnyCodable]
 
     /// Creates a health check response with the given values.
-    public init(code: Int = 200, message: String = "", data: [String: AnyCodable] = [:]) {
+    ///
+    /// - Parameter code: The HTTP-style status code. Defaults to `0`; the
+    ///   server returns `200` when the API is healthy.
+    /// - Parameter message: A human-readable status message.
+    /// - Parameter data: Additional health details keyed by check name.
+    public init(code: Int = 0, message: String = "", data: [String: AnyCodable] = [:]) {
         self.code = code
         self.message = message
         self.data = data

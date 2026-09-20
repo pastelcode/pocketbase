@@ -491,7 +491,9 @@ open class PocketBase: @unchecked Sendable {
                 case .form(let formFields):
                     let multipart = MultipartFormData(fields: formFields)
                     request.httpBody = multipart.bodyData
-                    request.setValue(multipart.contentTypeHeader, forHTTPHeaderField: "Content-Type")
+                    if request.value(forHTTPHeaderField: "Content-Type") == nil {
+                        request.setValue(multipart.contentTypeHeader, forHTTPHeaderField: "Content-Type")
+                    }
                 }
             } catch {
                 throw ClientResponseError(

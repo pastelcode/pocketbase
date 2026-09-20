@@ -34,6 +34,11 @@ public struct AnyCodable: Codable, Equatable, Hashable, Sendable, CustomStringCo
         /// Dates encode as ISO-8601 (`YYYY-MM-DDTHH:MM:SS.sssZ`) in JSON and
         /// as `YYYY-MM-DD HH:MM:SS.sssZ` (space separator, UTC) in query
         /// strings.
+        ///
+        /// Decoding never produces a `.date`: ISO-8601 strings are decoded as
+        /// ``AnySendable/string(_:)``, so a round-trip through `Codable`
+        /// returns a string. Only values created from a `Date` encode and
+        /// format as dates.
         case date(Date)
         /// An ordered list of values.
         case array([AnyCodable])

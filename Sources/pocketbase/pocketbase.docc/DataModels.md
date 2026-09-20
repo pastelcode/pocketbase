@@ -11,7 +11,7 @@ other collection field is stored in ``RecordModel/rawFields`` and can be read
 and written through the subscript:
 
 ```swift
-let record = try await pb.collection("posts").getOne("RECORD_ID")
+let record: RecordModel = try await pb.collection("posts").getOne(id: "RECORD_ID")
 
 print(record.id)
 print(record["title"]?.stringValue ?? "")
@@ -35,7 +35,7 @@ Switch on ``CollectionModel/collectionType`` to handle each kind. The
 kind-specific properties are optional and `nil` for the other kinds:
 
 ```swift
-let collection = try await pb.collections.get("posts")
+let collection: CollectionModel = try await pb.collections.getOne(id: "posts")
 
 switch collection.collectionType {
 case .auth:
@@ -79,6 +79,10 @@ and an empty `items` array) for convenience when you construct one yourself.
 Values decoded from a response always keep the server values, matching the
 reference SDK, which has no defaults.
 
+``CrudService/getList(page:perPage:options:)`` rebuilds the result from these
+five fields, so unknown top-level response keys are dropped; the JavaScript
+SDK returns the response object verbatim.
+
 ## SQLResult rows
 
 ``SQLResult/rows`` is `[[String?]]`, like the reference SDK's
@@ -90,7 +94,10 @@ as their string representations.
 
 Set ``SendOptions/body-swift.property`` to
 ``SendOptions/AnySendableBody/form(_:)`` to submit a
-`multipart/form-data` request. Each field maps to the wire as follows:
+`multipart/form-data` request. Unlike the JavaScript SDK, which converts a
+plain object containing files into `FormData` automatically, Swift requires
+this explicit body kind with ``FileParam`` values because ``AnyCodable``
+cannot carry binary data. Each field maps to the wire as follows:
 
 | `SendOptions.FormValue` | Multipart body | Batch body |
 |---|---|---|
@@ -98,7 +105,7 @@ Set ``SendOptions/body-swift.property`` to
 | `.json(_:)` | `{"<field>": <value>}` under the reserved `@jsonPayload` field | Value under the field name |
 | `.jsonPayload(_:)` | The value under `@jsonPayload`, unwrapped | Merged into the JSON body |
 | `.file(_:)`, `.files(_:)` | One part per file under the field name | `files` entries |
-| `.array(_:)` | One part per element under the field name | Regular values into JSON, files under a `+`-suffixed key |
+| `.array(_:)` | One part per element under the field name | Values and files: regular values into JSON, files under a `+`-suffixed key; files only: plain key |
 
 ### JSON values and `@jsonPayload`
 

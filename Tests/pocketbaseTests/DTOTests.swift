@@ -88,6 +88,23 @@ struct DTOTests {
         #expect(try roundTrip(record) == record)
     }
 
+    @Test func recordModelReservedBagKeysDoNotDuplicate() throws {
+        var record: RecordModel = try decodeDTO(#"""
+        {"id":"r1","collectionId":"c1","collectionName":"posts","created":"2026-01-01 00:00:00.000Z"}
+        """#)
+        record.rawFields["id"] = AnyCodable("evil")
+        record.rawFields["created"] = AnyCodable("2020-01-01 00:00:00.000Z")
+
+        let data = try JSONEncoder().encode(record)
+        let json = try #require(String(data: data, encoding: .utf8))
+        #expect(json.components(separatedBy: "\"id\":").count == 2)
+        #expect(json.components(separatedBy: "\"created\":").count == 2)
+
+        let decoded = try JSONDecoder().decode(RecordModel.self, from: data)
+        #expect(decoded.id == "r1")
+        #expect(decoded.created == "2026-01-01 00:00:00.000Z")
+    }
+
     // MARK: - CollectionModel
 
     @Test func collectionModelBaseRoundTrip() throws {
@@ -338,6 +355,20 @@ struct DTOTests {
     @Test func healthCheckResponseRoundTrip() throws {
         let response = HealthCheckResponse(code: 200, message: "API is healthy", data: ["db": true, "uptime": 12.5])
         #expect(try roundTrip(response) == response)
+    }
+
+    @Test func healthCheckResponseDefaultsToZeroCode() {
+        #expect(HealthCheckResponse().code == 0)
+        #expect(HealthCheckResponse(message: "ok").code == 0)
+    }
+
+    @Test func anyCodableDateRoundTripsAsString() throws {
+        let date = Date(timeIntervalSince1970: 0)
+        let value = AnyCodable(date)
+        #expect(value.value == .date(date))
+
+        let roundTripped = try roundTrip(value)
+        #expect(roundTripped.stringValue == date.pocketBaseISO8601)
     }
 
     // MARK: - Auth DTOs

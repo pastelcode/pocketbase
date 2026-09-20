@@ -88,6 +88,10 @@ open class CrudService<M: Codable & Sendable>: BaseService, @unchecked Sendable 
     /// Items are materialized through ``decode(_:)``, which subclasses can
     /// override to customize decoding.
     ///
+    /// - Note: The result is rebuilt from the fields this SDK models, so
+    ///   unknown top-level response keys are dropped. The JavaScript SDK
+    ///   returns the response object verbatim.
+    ///
     /// - Parameters:
     ///   - page: The 1-based page number. Defaults to `1`.
     ///   - perPage: The number of items per page. Defaults to `30`.

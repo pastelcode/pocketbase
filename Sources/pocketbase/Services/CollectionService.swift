@@ -13,6 +13,12 @@ open class CollectionService: CrudService<CollectionModel>, @unchecked Sendable 
     /// Imports the provided collections into the application.
     ///
     /// Existing collections with matching names are updated, and new ones are created.
+    /// Decoded collections are re-encoded with their known and unknown field
+    /// data (see ``CollectionField/rawFields``), so importing collections
+    /// fetched from the server keeps their original configuration.
+    ///
+    /// - Warning: When `deleteMissing` is `true`, every collection that is not
+    ///   part of `collections` is deleted, including its fields and records.
     ///
     /// Declared using Swift's escaped-identifier syntax because `import` is a
     /// reserved keyword; the escaping backticks are not required at the call

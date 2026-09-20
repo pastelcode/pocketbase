@@ -145,6 +145,11 @@ public struct SendOptions: Sendable {
         /// A pre-built JSON value encoded by the client.
         case rawJson(AnyCodable)
         /// A multipart form body assembled from the given fields.
+        ///
+        /// Unlike the JavaScript SDK, which converts a plain object containing
+        /// files into `FormData` automatically, Swift requires this explicit
+        /// body kind with ``FileParam`` values because ``AnyCodable`` cannot
+        /// carry binary data.
         case form([String: FormValue])
     }
 
