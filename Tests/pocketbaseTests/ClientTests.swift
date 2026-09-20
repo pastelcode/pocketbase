@@ -39,7 +39,7 @@ struct ClientTests {
 
         #expect(untyped === untypedAgain)
         #expect(typed === typedAgain)
-        #expect((untyped as AnyObject) !== (typed as AnyObject))
+        #expect(ObjectIdentifier(untyped) != ObjectIdentifier(typed))
     }
 
     @Test func testBuildURL() {
