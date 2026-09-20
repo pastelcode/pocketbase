@@ -21,9 +21,33 @@ public enum BatchServiceError: Error, CustomStringConvertible, Equatable, Sendab
 
 /// A queued request together with the reason its body cannot be serialized,
 /// when applicable.
-private struct QueuedBatchRequest {
+struct QueuedBatchRequest {
     let request: BatchRequest
     let unsupportedBodyReason: String?
+}
+
+/// A thread-safe buffer of queued batch requests.
+///
+/// The queue is shared by a ``BatchService`` and its ``SubBatchService``
+/// instances, so a sub-batch stays usable even when the service that created
+/// it is no longer retained.
+final class BatchQueue: @unchecked Sendable {
+    private let lock = NSRecursiveLock()
+    private var requests: [QueuedBatchRequest] = []
+
+    /// Appends a request to the queue.
+    func append(_ request: QueuedBatchRequest) {
+        lock.lock()
+        defer { lock.unlock() }
+        requests.append(request)
+    }
+
+    /// Returns a snapshot of the queued requests, in insertion order.
+    func snapshot() -> [QueuedBatchRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        return requests
+    }
 }
 
 /// Groups multiple record operations into a single `/api/batch` request.
@@ -41,17 +65,21 @@ private struct QueuedBatchRequest {
 /// Bodies queued as `.form` may mix regular values and files under one field
 /// through ``SendOptions/FormValue/array(_:)``. Regular values are sent in the
 /// JSON payload while files become multipart fields; when a field carries both,
-/// the files are appended under a `+`-suffixed key (for example
+/// the files are appended under a key with a trailing `+` (for example
 /// `attachments+`) so the server appends instead of replacing, matching the
-/// JavaScript SDK.
+/// JavaScript SDK. A key that already starts or ends with `+` is left as-is.
 open class BatchService: BaseService, @unchecked Sendable {
     private let lock = NSRecursiveLock()
-    private var requests: [QueuedBatchRequest] = []
+    private let queue = BatchQueue()
     private var subs: [String: SubBatchService] = [:]
 
     /// Returns the sub-batch service for a collection, creating it on first use.
     ///
     /// Repeated calls with the same identifier return the same instance.
+    ///
+    /// The returned sub-batch shares this service's request queue, so it keeps
+    /// working even when the service itself is no longer retained (for example
+    /// in the chaining form `pocketbase.createBatch().collection("posts")`).
     ///
     /// - Parameter collectionIdOrName: The collection identifier or name.
     /// - Returns: The sub-batch service targeting the collection.
@@ -63,21 +91,9 @@ open class BatchService: BaseService, @unchecked Sendable {
             return existing
         }
 
-        let sub = SubBatchService(batchService: self, collectionIdOrName: collectionIdOrName)
+        let sub = SubBatchService(batchQueue: queue, collectionIdOrName: collectionIdOrName)
         subs[collectionIdOrName] = sub
         return sub
-    }
-
-    fileprivate func appendRequest(_ req: QueuedBatchRequest) {
-        lock.lock()
-        defer { lock.unlock() }
-        requests.append(req)
-    }
-
-    private func getRequests() -> [QueuedBatchRequest] {
-        lock.lock()
-        defer { lock.unlock() }
-        return requests
     }
 
     /// Sends all queued requests as a single batch.
@@ -95,7 +111,7 @@ open class BatchService: BaseService, @unchecked Sendable {
     /// - Throws: A ``BatchServiceError`` when a queued body cannot be
     ///   serialized, or a ``ClientResponseError`` when the request fails.
     open func send(options: SendOptions? = nil) async throws -> [BatchRequestResult] {
-        let queued = getRequests()
+        let queued = queue.snapshot()
 
         for (index, item) in queued.enumerated() {
             if let reason = item.unsupportedBodyReason {
@@ -163,18 +179,20 @@ open class BatchService: BaseService, @unchecked Sendable {
 /// are rejected by ``BatchService/send(options:)`` with
 /// ``BatchServiceError/unsupportedBody(index:reason:)``.
 open class SubBatchService: @unchecked Sendable {
-    private unowned let batchService: BatchService
+    private let queue: BatchQueue
     /// The collection identifier or name targeted by this sub-batch service.
     public let collectionIdOrName: String
 
     /// Creates a sub-batch service bound to one collection.
     ///
-    /// Prefer ``BatchService/collection(_:)`` over creating instances directly.
+    /// Not public on purpose: instances are only produced by
+    /// ``BatchService/collection(_:)``, which shares the parent's request
+    /// queue with the returned sub-batch.
     ///
-    /// - Parameter batchService: The parent batch service that receives queued requests.
+    /// - Parameter batchQueue: The queue shared with the parent batch service.
     /// - Parameter collectionIdOrName: The collection identifier or name.
-    public init(batchService: BatchService, collectionIdOrName: String) {
-        self.batchService = batchService
+    init(batchQueue: BatchQueue, collectionIdOrName: String) {
+        self.queue = batchQueue
         self.collectionIdOrName = collectionIdOrName
     }
 
@@ -192,7 +210,7 @@ open class SubBatchService: @unchecked Sendable {
             bodyParams: bodyParams,
             options: options
         )
-        batchService.appendRequest(req)
+        queue.append(req)
     }
 
     /// Queues a create (`POST`) request for the collection.
@@ -209,7 +227,7 @@ open class SubBatchService: @unchecked Sendable {
             bodyParams: bodyParams,
             options: options
         )
-        batchService.appendRequest(req)
+        queue.append(req)
     }
 
     /// Queues an update (`PATCH`) request for a record.
@@ -228,7 +246,7 @@ open class SubBatchService: @unchecked Sendable {
             bodyParams: bodyParams,
             options: options
         )
-        batchService.appendRequest(req)
+        queue.append(req)
     }
 
     /// Queues a delete (`DELETE`) request for a record.
@@ -243,7 +261,7 @@ open class SubBatchService: @unchecked Sendable {
             bodyParams: nil,
             options: options
         )
-        batchService.appendRequest(req)
+        queue.append(req)
     }
 
     private func prepareRequest(
@@ -279,11 +297,25 @@ open class SubBatchService: @unchecked Sendable {
                     unsupportedBodyReason = "rawJson must wrap a JSON object; use .json or .form instead"
                 }
             case .form(let formDict):
+                var payloads: [(key: String, value: AnyCodable)] = []
                 for (key, value) in formDict {
+                    if case .jsonPayload(let payload) = value {
+                        payloads.append((key, payload))
+                        continue
+                    }
                     appendFormValue(value, key: key, jsonBody: &jsonBody, filesBody: &filesBody)
                 }
+                // Payloads are applied after the regular fields so their keys
+                // win on overlap, matching the reference SDK's merge order.
+                // The values are sorted by the field key that carries them so
+                // the outcome does not depend on Swift's dictionary order.
+                for (_, payload) in payloads.sorted(by: { $0.key < $1.key }) {
+                    if !mergeJsonPayload(payload, into: &jsonBody) {
+                        unsupportedBodyReason = "jsonPayload must wrap a JSON object; use .json or .form instead"
+                    }
+                }
             case .data:
-                unsupportedBodyReason = "raw data bodies are not supported; use .json or .form instead"
+                unsupportedBodyReason = "raw data bodies are not supported; use .json, an object .rawJson or .form instead"
             }
         }
 
@@ -302,9 +334,14 @@ open class SubBatchService: @unchecked Sendable {
     /// Maps one form value into the JSON body and file fields of a batch request.
     ///
     /// Regular values are embedded in the JSON payload; files become multipart
-    /// fields. When one field carries both, the files are appended under a
-    /// `+`-suffixed key so the server appends instead of replacing, mirroring
-    /// the JavaScript SDK.
+    /// fields. When a field carries both, the files are appended under a key
+    /// with a trailing `+` (an existing leading or trailing `+` is not
+    /// doubled) so the server appends instead of replacing, mirroring the
+    /// JavaScript SDK.
+    ///
+    /// Only the immediate elements of ``SendOptions/FormValue/array(_:)`` are
+    /// partitioned, like the reference SDK: nested arrays are regular JSON
+    /// values, and the files inside them serialize as empty JSON objects.
     private func appendFormValue(
         _ value: SendOptions.FormValue,
         key: String,
@@ -317,19 +354,35 @@ open class SubBatchService: @unchecked Sendable {
         case .json(let j):
             jsonBody[key] = j
         case .jsonPayload(let j):
-            if let dict = j.dictionaryValue {
-                for (payloadKey, payloadValue) in dict {
-                    jsonBody[payloadKey] = payloadValue
-                }
-            }
+            // Top-level payloads are intercepted by `prepareRequest` and
+            // merged after the regular fields; keep this as a safe fallback.
+            jsonBody[key] = j
         case .file(let f):
             filesBody[key, default: []].append(f)
         case .files(let fs):
-            filesBody[key, default: []].append(contentsOf: fs)
+            if fs.isEmpty {
+                // An empty list clears the field, like the reference SDK.
+                jsonBody[key] = AnyCodable([])
+            } else {
+                filesBody[key, default: []].append(contentsOf: fs)
+            }
         case .array(let values):
             var regulars: [AnyCodable] = []
             var foundFiles: [FileParam] = []
-            splitFormValues(values, regulars: &regulars, files: &foundFiles)
+            for element in values {
+                switch element {
+                case .file(let f):
+                    foundFiles.append(f)
+                case .files(let fs):
+                    foundFiles.append(contentsOf: fs)
+                case .string(let s):
+                    regulars.append(AnyCodable(s))
+                case .json(let j), .jsonPayload(let j):
+                    regulars.append(j)
+                case .array(let nested):
+                    regulars.append(jsonValue(of: nested))
+                }
+            }
 
             if !foundFiles.isEmpty && regulars.isEmpty {
                 filesBody[key, default: []].append(contentsOf: foundFiles)
@@ -343,28 +396,38 @@ open class SubBatchService: @unchecked Sendable {
         }
     }
 
-    /// Partitions form values into regular JSON values and files, flattening
-    /// nested arrays like the reference SDK's batch serializer.
-    private func splitFormValues(
-        _ values: [SendOptions.FormValue],
-        regulars: inout [AnyCodable],
-        files: inout [FileParam]
-    ) {
-        for value in values {
-            switch value {
-            case .string(let s):
-                regulars.append(AnyCodable(s))
-            case .json(let j):
-                regulars.append(j)
-            case .jsonPayload(let j):
-                regulars.append(j)
-            case .file(let f):
-                files.append(f)
-            case .files(let fs):
-                files.append(contentsOf: fs)
-            case .array(let nested):
-                splitFormValues(nested, regulars: &regulars, files: &files)
-            }
+    /// Merges a `@jsonPayload` value into the JSON body.
+    ///
+    /// - Returns: `false` when the payload is not a JSON object.
+    private func mergeJsonPayload(_ payload: AnyCodable, into jsonBody: inout [String: AnyCodable]) -> Bool {
+        guard let dict = payload.dictionaryValue else {
+            return false
+        }
+        for (key, value) in dict {
+            jsonBody[key] = value
+        }
+        return true
+    }
+
+    /// Converts a nested array into the JSON value the reference SDK produces,
+    /// where files (which have no JSON representation) become empty objects.
+    private func jsonValue(of values: [SendOptions.FormValue]) -> AnyCodable {
+        return AnyCodable(values.map { jsonValue(of: $0) })
+    }
+
+    /// Converts one nested form value into its JSON representation.
+    private func jsonValue(of value: SendOptions.FormValue) -> AnyCodable {
+        switch value {
+        case .string(let s):
+            return AnyCodable(s)
+        case .json(let j), .jsonPayload(let j):
+            return j
+        case .array(let nested):
+            return jsonValue(of: nested)
+        case .file:
+            return AnyCodable([String: AnyCodable]())
+        case .files(let fs):
+            return AnyCodable(fs.map { _ in AnyCodable([String: AnyCodable]()) })
         }
     }
 }

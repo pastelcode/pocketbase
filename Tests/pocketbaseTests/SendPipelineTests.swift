@@ -217,6 +217,61 @@ struct SendPipelineTests {
         }
     }
 
+    @Test func emptyFormCollectionsSerializeAsEmptyJSONArrays() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let capture = RequestCapture()
+        let fetch: CustomFetch = { request in
+            capture.store(request)
+            return (Data("{}".utf8), httpResponse(for: request))
+        }
+
+        var options = SendOptions()
+        options.fetch = fetch
+        options.body = .form([
+            "tags": .array([]),
+            "attachments": .files([])
+        ])
+
+        _ = try await client.sendRaw(path: "/api/things", options: options)
+
+        let request = try #require(capture.last)
+        let parts = parseMultipartParts(of: request)
+        #expect(parts.allSatisfy { $0.name == "@jsonPayload" })
+
+        var merged: [String: AnyCodable] = [:]
+        for part in parts {
+            let payload = try JSONDecoder().decode(AnyCodable.self, from: Data(part.value.utf8))
+            for (key, value) in payload.dictionaryValue ?? [:] {
+                merged[key] = value
+            }
+        }
+        #expect(merged["tags"]?.arrayValue?.isEmpty == true)
+        #expect(merged["attachments"]?.arrayValue?.isEmpty == true)
+    }
+
+    @Test func nonFiniteJSONValuesSerializeAsNull() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let capture = RequestCapture()
+        let fetch: CustomFetch = { request in
+            capture.store(request)
+            return (Data("{}".utf8), httpResponse(for: request))
+        }
+
+        var options = SendOptions()
+        options.fetch = fetch
+        options.body = .form([
+            "meta": .json(AnyCodable(["score": Double.nan, "ratio": Double.infinity]))
+        ])
+
+        _ = try await client.sendRaw(path: "/api/things", options: options)
+
+        let request = try #require(capture.last)
+        let part = try #require(parseMultipartParts(of: request).first { $0.name == "@jsonPayload" })
+        let payload = try JSONDecoder().decode(AnyCodable.self, from: Data(part.value.utf8))
+        let expected = try JSONDecoder().decode(AnyCodable.self, from: Data(#"{"meta":{"score":null,"ratio":null}}"#.utf8))
+        #expect(payload == expected)
+    }
+
     @Test func afterSendErrorsAreWrapped() async throws {
         let client = PocketBase(baseURL: "http://127.0.0.1:8090")
         let fetch: CustomFetch = { request in (Data("{}".utf8), httpResponse(for: request)) }

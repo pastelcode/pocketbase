@@ -165,6 +165,9 @@ public struct SendOptions: Sendable {
         /// A single file field.
         case file(FileParam)
         /// A multiple-file field.
+        ///
+        /// An empty list is serialized as an empty array so the server can
+        /// clear the field.
         case files([FileParam])
         /// A structured JSON value.
         ///
@@ -181,18 +184,27 @@ public struct SendOptions: Sendable {
         /// the caller provides the full payload to merge. This matches bodies
         /// where several fields were collected into one `@jsonPayload` entry
         /// and is used internally by ``BatchService``.
+        ///
+        /// Batch bodies require a JSON object and merge its keys after the
+        /// regular fields, so payload keys win when they overlap.
         case jsonPayload(AnyCodable)
         /// Multiple values appended under one field name.
         ///
         /// Multipart bodies emit one part per element (nested arrays are
         /// flattened), the branch the reference SDK uses for arrays that
         /// contain at least one file. Arrays without files are sent as
-        /// ``json(_:)`` by the reference SDK.
+        /// ``json(_:)`` by the reference SDK. An empty array is appended as
+        /// `{"<field>": []}` under `@jsonPayload` so the server can clear the
+        /// field.
         ///
-        /// Batch requests split the elements into JSON body values
-        /// and file fields: files are appended under a `+`-suffixed key when
-        /// the same field also carries regular values, mirroring the
-        /// JavaScript SDK.
+        /// Batch requests partition only the immediate elements, like the
+        /// reference SDK: files become multipart fields while everything else,
+        /// including nested arrays, becomes a JSON body value. When a field
+        /// also carries regular values, the files are appended under a key
+        /// with a trailing `+`; a key that already starts or ends with `+` is
+        /// left as-is. Files inside a nested array have no JSON
+        /// representation and serialize as empty objects, matching
+        /// `JSON.stringify`.
         case array([FormValue])
     }
 

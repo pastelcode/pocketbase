@@ -18,9 +18,13 @@ import Foundation
 /// - ``SendOptions/FormValue/jsonPayload(_:)`` values are appended under
 ///   `@jsonPayload` verbatim.
 /// - ``SendOptions/FormValue/array(_:)`` values emit one part per element.
+///   Empty arrays and empty file lists are appended as `{"<field>": []}` under
+///   `@jsonPayload` so the server can clear the field.
 ///
 /// Field names and filenames are escaped the way browsers do it: carriage
 /// returns, line feeds and double quotes become `%0D`, `%0A` and `%22`.
+/// Non-finite doubles inside JSON payloads become `null`, like
+/// `JSON.stringify`.
 ///
 /// ```swift
 /// let formData = MultipartFormData(fields: [
@@ -51,11 +55,30 @@ public struct MultipartFormData: Sendable {
         var data = Data()
 
         for (key, val) in fields {
+            if Self.isEmptyCollection(val) {
+                // The reference SDK converts empty arrays to
+                // `{"<field>": []}` so the server can clear the field.
+                data.append(Self.jsonPayloadPart(wrapping: AnyCodable([key: AnyCodable([])]), boundary: boundary))
+                continue
+            }
             Self.append(val, named: key, boundary: boundary, to: &data)
         }
 
         data.append("--\(boundary)--\r\n".data(using: .utf8)!)
         self.bodyData = data
+    }
+
+    /// Whether the value is an empty ``SendOptions/FormValue/array(_:)`` or
+    /// ``SendOptions/FormValue/files(_:)``.
+    private static func isEmptyCollection(_ value: SendOptions.FormValue) -> Bool {
+        switch value {
+        case .array(let values):
+            return values.isEmpty
+        case .files(let fileParams):
+            return fileParams.isEmpty
+        default:
+            return false
+        }
     }
 
     /// Appends the encoded representation of one form value to `data`.
@@ -91,12 +114,32 @@ public struct MultipartFormData: Sendable {
     }
 
     /// Encodes a part for the reserved `@jsonPayload` field.
+    ///
+    /// Non-finite doubles (`NaN` and infinities) are normalized to `null`
+    /// (matching `JSON.stringify`), so an invalid value can never drop the
+    /// part from the body.
     private static func jsonPayloadPart(wrapping value: AnyCodable, boundary: String) -> Data {
-        guard let encodedData = try? JSONEncoder().encode(value),
+        guard let encodedData = try? JSONEncoder().encode(jsonSafe(value)),
               let jsonString = String(data: encodedData, encoding: .utf8) else {
-            return Data()
+            // Unreachable for `AnyCodable` values; never emit an empty part.
+            return textPart(named: "@jsonPayload", value: "null", boundary: boundary)
         }
         return textPart(named: "@jsonPayload", value: jsonString, boundary: boundary)
+    }
+
+    /// Returns a JSON-safe copy of the value: non-finite doubles become
+    /// `null`, like `JSON.stringify`.
+    private static func jsonSafe(_ value: AnyCodable) -> AnyCodable {
+        switch value.value {
+        case .double(let d) where !d.isFinite:
+            return AnyCodable(nil)
+        case .array(let values):
+            return AnyCodable(values.map(jsonSafe))
+        case .dictionary(let values):
+            return AnyCodable(values.mapValues(jsonSafe))
+        default:
+            return value
+        }
     }
 
     /// Encodes a plain text part.

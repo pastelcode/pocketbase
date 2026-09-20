@@ -883,8 +883,8 @@ public struct BatchRequest: Codable, Equatable, Sendable {
     public var json: [String: AnyCodable]?
     /// Files to upload, keyed by field name.
     ///
-    /// A key ending with `+` tells the server to append to the existing field
-    /// instead of replacing it.
+    /// A key that starts or ends with `+` tells the server to append to the
+    /// existing field instead of replacing it.
     public var files: [String: [FileParam]]?
     /// Additional request headers.
     public var headers: [String: String]?

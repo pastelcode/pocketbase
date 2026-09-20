@@ -120,7 +120,8 @@ struct BatchServiceTests {
 
         batch.collection("posts").create(bodyParams: .form([
             "tags": .array([.string("a"), .json(AnyCodable(1))]),
-            "empty": .array([])
+            "empty": .array([]),
+            "attachments": .files([])
         ]))
 
         _ = try await batch.send(options: makeOptions(capture))
@@ -131,6 +132,7 @@ struct BatchServiceTests {
         #expect(body["tags"]?.arrayValue?.first?.stringValue == "a")
         #expect(body["tags"]?.arrayValue?.last?.intValue == 1)
         #expect(body["empty"]?.arrayValue?.isEmpty == true)
+        #expect(body["attachments"]?.arrayValue?.isEmpty == true)
 
         let request = try #require(capture.requests.last)
         #expect(parseMultipartParts(of: request).allSatisfy { $0.name == "@jsonPayload" })
@@ -157,6 +159,37 @@ struct BatchServiceTests {
         let request = try #require(capture.requests.last)
         let fileParts = parseMultipartParts(of: request).filter { $0.name.hasPrefix("requests.0.") }
         #expect(fileParts.map(\.name) == ["requests.0.attachments+"])
+    }
+
+    @Test func nestedArraysMatchTheJSReferenceWireFormat() async throws {
+        let capture = BatchRequestCapture()
+        let client = makeClient()
+        let batch = client.createBatch()
+
+        batch.collection("posts").create(bodyParams: .form([
+            "nested": .array([.array([
+                .file(FileParam(filename: "a.txt", data: Data("A".utf8)))
+            ])]),
+            "mixed": .array([
+                .array([
+                    .string("v"),
+                    .file(FileParam(filename: "b.txt", data: Data("B".utf8)))
+                ]),
+                .file(FileParam(filename: "c.txt", data: Data("C".utf8)))
+            ])
+        ]))
+
+        _ = try await batch.send(options: makeOptions(capture))
+
+        let payload = try jsonPayload(of: capture.requests.last)
+        let expected = try decode(#"{"requests":[{"method":"POST","url":"/api/collections/posts/records","body":{"nested":[[{}]],"mixed":[["v",{}]]}}]}"#)
+        #expect(payload == expected)
+
+        let request = try #require(capture.requests.last)
+        let fileParts = parseMultipartParts(of: request).filter { $0.name.hasPrefix("requests.0.") }
+        #expect(fileParts.map(\.name) == ["requests.0.mixed+"])
+        #expect(fileParts.map(\.filename) == ["c.txt"])
+        #expect(fileParts.map(\.value) == ["C"])
     }
 
     @Test func requestsWithoutFieldsStillSerializeAnEmptyBodyAndHeaders() async throws {
@@ -231,6 +264,63 @@ struct BatchServiceTests {
         #expect(body["title"]?.stringValue == "T")
     }
 
+    @Test func jsonPayloadOverridesSameNamedRegularFields() async throws {
+        let capture = BatchRequestCapture()
+        let client = makeClient()
+        let batch = client.createBatch()
+
+        batch.collection("posts").create(bodyParams: .form([
+            "description": .string("old"),
+            "@jsonPayload": .jsonPayload(AnyCodable([
+                "description": AnyCodable("new"),
+                "extra": AnyCodable(1)
+            ]))
+        ]))
+
+        _ = try await batch.send(options: makeOptions(capture))
+
+        let payload = try jsonPayload(of: capture.requests.last)
+        let body = try #require(firstRequest(in: payload)["body"]?.dictionaryValue)
+        #expect(body["description"]?.stringValue == "new")
+        #expect(body["extra"]?.intValue == 1)
+    }
+
+    @Test func nonObjectJsonPayloadIsRejected() async throws {
+        let capture = BatchRequestCapture()
+        let client = makeClient()
+        let batch = client.createBatch()
+        let options = makeOptions(capture)
+
+        batch.collection("posts").create(bodyParams: .form([
+            "@jsonPayload": .jsonPayload(AnyCodable([1, 2]))
+        ]))
+
+        await #expect(throws: BatchServiceError.unsupportedBody(
+            index: 0,
+            reason: "jsonPayload must wrap a JSON object; use .json or .form instead"
+        )) {
+            _ = try await batch.send(options: options)
+        }
+        #expect(capture.requests.isEmpty)
+    }
+
+    @Test func nonFiniteNumbersSerializeAsNull() async throws {
+        let capture = BatchRequestCapture()
+        let client = makeClient()
+        let batch = client.createBatch()
+
+        batch.collection("posts").create(bodyParams: .form([
+            "score": .json(AnyCodable(Double.nan)),
+            "ratios": .json(AnyCodable([Double.infinity, 1.5]))
+        ]))
+
+        _ = try await batch.send(options: makeOptions(capture))
+
+        let payload = try jsonPayload(of: capture.requests.last)
+        let expected = try decode(#"{"requests":[{"method":"POST","url":"/api/collections/posts/records","body":{"score":null,"ratios":[null,1.5]}}]}"#)
+        #expect(payload == expected)
+    }
+
     @Test func dataBodiesAreRejectedBeforeSending() async throws {
         let capture = BatchRequestCapture()
         let client = makeClient()
@@ -241,7 +331,7 @@ struct BatchServiceTests {
 
         await #expect(throws: BatchServiceError.unsupportedBody(
             index: 0,
-            reason: "raw data bodies are not supported; use .json or .form instead"
+            reason: "raw data bodies are not supported; use .json, an object .rawJson or .form instead"
         )) {
             _ = try await batch.send(options: options)
         }
@@ -283,5 +373,21 @@ struct BatchServiceTests {
         let first = try jsonPayload(of: capture.requests.first)
         let second = try jsonPayload(of: capture.requests.last)
         #expect(first == second)
+    }
+
+    @Test func collectionReturnsTheSameSubBatch() {
+        let client = makeClient()
+        let batch = client.createBatch()
+        #expect(batch.collection("posts") === batch.collection("posts"))
+    }
+
+    @Test func subBatchQueuesAfterItsParentIsDeallocated() {
+        let client = makeClient()
+        // Only the sub-batch is kept; the parent service is released as soon
+        // as this expression ends. This used to trap on an unowned reference.
+        let sub = client.createBatch().collection("posts")
+        sub.create(bodyParams: .json(["title": AnyCodable("P1")]))
+        sub.update(id: "1", bodyParams: .json(["title": AnyCodable("P2")]))
+        #expect(sub.collectionIdOrName == "posts")
     }
 }
