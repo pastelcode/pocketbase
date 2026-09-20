@@ -51,6 +51,27 @@ case .base, nil:
 ``CollectionModel/type`` always keeps the raw string returned by the server.
 This keeps decoding forward compatible.
 
+## CollectionField
+
+A field exposes the properties shared by every field type: `id`, `name`,
+`type`, `system`, `required`, `hidden` and `presentable`. Type-specific options
+(`options`, `values`, `maxSelect`, `min`, `max`, `pattern`, `mimeTypes` and any
+future keys) are kept in ``CollectionField/rawFields`` and can be read and
+written through the subscript:
+
+```swift
+if var field = collection.fields.first(where: { $0.name == "tags" }) {
+    print(field["values"]?.arrayValue?.count ?? 0)
+    field["maxSelect"] = 3
+}
+```
+
+Unknown keys survive a JSON round-trip, including the timestamps and unknown
+keys of ``CollectionModel`` itself. That is what makes
+``CollectionService/import(_:deleteMissing:options:)`` safe: collections
+fetched from the server are re-encoded with their original field options
+instead of being reset to the server defaults.
+
 ## ListResult defaults
 
 ``ListResult`` provides local defaults (`page` 1, `perPage` 30, zeroed totals

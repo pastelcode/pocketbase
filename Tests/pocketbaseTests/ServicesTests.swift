@@ -1,5 +1,8 @@
 import Testing
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 @testable import pocketbase
 
 struct ServicesTests {
@@ -135,5 +138,65 @@ struct ServicesTests {
         let collection = CollectionModel(id: "c1", name: "posts", type: "base")
         let result = try await client.collections.import([collection], deleteMissing: true, options: opt)
         #expect(result == true)
+    }
+
+    @Test func testCollectionImportPreservesUnknownFieldOptions() async throws {
+        let client = PocketBase(baseURL: "http://127.0.0.1:8090")
+        let capture = ImportRequestCapture()
+
+        let collection: CollectionModel = try JSONDecoder().decode(CollectionModel.self, from: Data(#"""
+        {
+            "id":"c1","name":"posts","type":"base","system":false,
+            "created":"2026-01-01 00:00:00.000Z","updated":"2026-01-02 00:00:00.000Z",
+            "fields":[{
+                "id":"f1","name":"tags","type":"select","system":false,"required":true,
+                "hidden":false,"presentable":false,"maxSelect":3,"values":["a","b"]
+            }],
+            "indexes":["CREATE INDEX idx ON posts (name)"]
+        }
+        """#.utf8))
+
+        var opt = SendOptions()
+        opt.fetch = { request in
+            capture.store(request)
+            let response = HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: "HTTP/1.1", headerFields: nil)!
+            return (Data(), response)
+        }
+
+        _ = try await client.collections.import([collection], deleteMissing: true, options: opt)
+
+        let request = try #require(capture.last)
+        let body = try #require(request.httpBody)
+        let payload = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(payload["deleteMissing"] as? Bool == true)
+
+        let collections = try #require(payload["collections"] as? [[String: Any]])
+        let sent = try #require(collections.first)
+        #expect(sent["created"] as? String == "2026-01-01 00:00:00.000Z")
+        #expect(sent["updated"] as? String == "2026-01-02 00:00:00.000Z")
+
+        let fields = try #require(sent["fields"] as? [[String: Any]])
+        let field = try #require(fields.first)
+        #expect(field["required"] as? Bool == true)
+        #expect(field["maxSelect"] as? Int == 3)
+        #expect(field["values"] as? [String] == ["a", "b"])
+    }
+}
+
+/// Captures the last request passed to a custom fetch.
+private final class ImportRequestCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [URLRequest] = []
+
+    var last: URLRequest? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage.last
+    }
+
+    func store(_ request: URLRequest) {
+        lock.lock()
+        storage.append(request)
+        lock.unlock()
     }
 }

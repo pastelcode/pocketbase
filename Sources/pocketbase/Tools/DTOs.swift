@@ -237,6 +237,12 @@ extension AnyCodable.AnySendable {
 
 // MARK: - Collection Types
 /// A single field definition of a collection.
+///
+/// Known properties are exposed as typed properties. Type-specific options
+/// (`options`, `values`, `maxSelect`, `min`, `max`, `pattern`, `mimeTypes`
+/// and any future keys) are preserved in ``rawFields`` and can be accessed
+/// through the subscript, so a decoded field can be re-encoded without losing
+/// its configuration.
 public struct CollectionField: Codable, Equatable, Sendable {
     /// Identifier of the field.
     public var id: String
@@ -246,19 +252,134 @@ public struct CollectionField: Codable, Equatable, Sendable {
     public var type: String
     /// Whether the field is a built-in system field.
     public var system: Bool
+    /// Whether the field must have a value.
+    public var required: Bool
     /// Whether the field is hidden from API responses.
     public var hidden: Bool
     /// Whether the field can be used as a presentable column.
     public var presentable: Bool
+    /// Type-specific options and unknown keys, preserved through round-trips.
+    public var rawFields: [String: AnyCodable]
 
     /// Creates a field definition with the given values.
-    public init(id: String = "", name: String = "", type: String = "", system: Bool = false, hidden: Bool = false, presentable: Bool = false) {
+    ///
+    /// - Parameter id: Identifier of the field.
+    /// - Parameter name: Name of the field.
+    /// - Parameter type: Field type, such as `text` or `number`.
+    /// - Parameter system: Whether the field is a built-in system field.
+    /// - Parameter required: Whether the field must have a value.
+    /// - Parameter hidden: Whether the field is hidden from API responses.
+    /// - Parameter presentable: Whether the field is a presentable column.
+    /// - Parameter rawFields: Type-specific options and unknown keys.
+    public init(
+        id: String = "",
+        name: String = "",
+        type: String = "",
+        system: Bool = false,
+        required: Bool = false,
+        hidden: Bool = false,
+        presentable: Bool = false,
+        rawFields: [String: AnyCodable] = [:]
+    ) {
         self.id = id
         self.name = name
         self.type = type
         self.system = system
+        self.required = required
         self.hidden = hidden
         self.presentable = presentable
+        self.rawFields = rawFields
+    }
+
+    /// Accesses a field property or option by name.
+    ///
+    /// Known properties map to their typed properties; any other key reads
+    /// from and writes to ``rawFields``.
+    public subscript(key: String) -> AnyCodable? {
+        get {
+            switch key {
+            case "id": return AnyCodable(id)
+            case "name": return AnyCodable(name)
+            case "type": return AnyCodable(type)
+            case "system": return AnyCodable(system)
+            case "required": return AnyCodable(required)
+            case "hidden": return AnyCodable(hidden)
+            case "presentable": return AnyCodable(presentable)
+            default: return rawFields[key]
+            }
+        }
+        set {
+            switch key {
+            case "id": id = newValue?.value.string ?? id
+            case "name": name = newValue?.value.string ?? name
+            case "type": type = newValue?.value.string ?? type
+            case "system": system = newValue?.boolValue ?? false
+            case "required": required = newValue?.boolValue ?? false
+            case "hidden": hidden = newValue?.boolValue ?? false
+            case "presentable": presentable = newValue?.boolValue ?? false
+            default:
+                if let newValue = newValue {
+                    rawFields[key] = newValue
+                } else {
+                    rawFields.removeValue(forKey: key)
+                }
+            }
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, type, system, required, hidden, presentable
+    }
+
+    /// Decodes a field, collecting unknown keys into ``rawFields``.
+    ///
+    /// - Throws: An error if a decoding container cannot be opened.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = (try? container.decode(String.self, forKey: .id)) ?? ""
+        self.name = (try? container.decode(String.self, forKey: .name)) ?? ""
+        self.type = (try? container.decode(String.self, forKey: .type)) ?? ""
+        self.system = (try? container.decode(Bool.self, forKey: .system)) ?? false
+        self.required = (try? container.decode(Bool.self, forKey: .required)) ?? false
+        self.hidden = (try? container.decode(Bool.self, forKey: .hidden)) ?? false
+        self.presentable = (try? container.decode(Bool.self, forKey: .presentable)) ?? false
+
+        let dynamicContainer = try decoder.container(keyedBy: DynamicCodingKey.self)
+        var fields: [String: AnyCodable] = [:]
+        for key in dynamicContainer.allKeys {
+            if CodingKeys(stringValue: key.stringValue) != nil {
+                continue
+            }
+            if let value = try? dynamicContainer.decode(AnyCodable.self, forKey: key) {
+                fields[key.stringValue] = value
+            }
+        }
+        self.rawFields = fields
+    }
+
+    /// Encodes the known properties together with the unknown keys in
+    /// ``rawFields``.
+    ///
+    /// Known properties take precedence: bag entries with a reserved key are
+    /// skipped, so no duplicate JSON keys are emitted.
+    ///
+    /// - Throws: An error if a dynamic value cannot be encoded.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(type, forKey: .type)
+        try container.encode(system, forKey: .system)
+        try container.encode(required, forKey: .required)
+        try container.encode(hidden, forKey: .hidden)
+        try container.encode(presentable, forKey: .presentable)
+
+        var dynamicContainer = encoder.container(keyedBy: DynamicCodingKey.self)
+        for (key, value) in rawFields where CodingKeys(stringValue: key) == nil {
+            if let codingKey = DynamicCodingKey(stringValue: key) {
+                try dynamicContainer.encode(value, forKey: codingKey)
+            }
+        }
     }
 }
 
@@ -459,8 +580,13 @@ public enum CollectionType: String, Codable, CaseIterable, Sendable {
 /// to handle each kind; the kind-specific properties are `nil` for the other
 /// kinds, and unknown future types map to `nil` instead of failing to decode.
 ///
+/// Unknown collection keys are preserved in ``rawFields`` and survive
+/// decode/encode round-trips, so models fetched from the server can be sent
+/// back (for example through ``CollectionService/import(_:deleteMissing:options:)``)
+/// without losing data this SDK version does not model.
+///
 /// ```swift
-/// let collection = try await pb.collections.get("posts")
+/// let collection: CollectionModel = try await pb.collections.getOne(id: "posts")
 ///
 /// switch collection.collectionType {
 /// case .auth:
@@ -480,6 +606,10 @@ public struct CollectionModel: BaseModel, Equatable, Sendable {
     ///
     /// Prefer ``collectionType`` for typed comparisons.
     public var type: String
+    /// Creation timestamp in ISO 8601 format, or `nil` when absent.
+    public var created: String?
+    /// Last update timestamp in ISO 8601 format, or `nil` when absent.
+    public var updated: String?
     /// The collection type as a ``CollectionType`` value.
     ///
     /// `nil` when the server returns a type this SDK version does not know,
@@ -539,12 +669,16 @@ public struct CollectionModel: BaseModel, Equatable, Sendable {
     public var resetPasswordTemplate: EmailTemplate?
     /// Email template for email change confirmation.
     public var confirmEmailChangeTemplate: EmailTemplate?
+    /// Unknown collection keys, preserved through round-trips.
+    public var rawFields: [String: AnyCodable]
 
     /// Creates a collection definition with the given values.
     public init(
         id: String = "",
         name: String = "",
         type: String = "base",
+        created: String? = nil,
+        updated: String? = nil,
         fields: [CollectionField] = [],
         indexes: [String] = [],
         system: Bool = false,
@@ -568,11 +702,14 @@ public struct CollectionModel: BaseModel, Equatable, Sendable {
         fileToken: TokenConfig? = nil,
         verificationTemplate: EmailTemplate? = nil,
         resetPasswordTemplate: EmailTemplate? = nil,
-        confirmEmailChangeTemplate: EmailTemplate? = nil
+        confirmEmailChangeTemplate: EmailTemplate? = nil,
+        rawFields: [String: AnyCodable] = [:]
     ) {
         self.id = id
         self.name = name
         self.type = type
+        self.created = created
+        self.updated = updated
         self.fields = fields
         self.indexes = indexes
         self.system = system
@@ -597,6 +734,110 @@ public struct CollectionModel: BaseModel, Equatable, Sendable {
         self.verificationTemplate = verificationTemplate
         self.resetPasswordTemplate = resetPasswordTemplate
         self.confirmEmailChangeTemplate = confirmEmailChangeTemplate
+        self.rawFields = rawFields
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, type, created, updated, fields, indexes, system
+        case listRule, viewRule, createRule, updateRule, deleteRule, viewQuery
+        case authRule, manageRule, authAlert, oauth2, passwordAuth, mfa, otp
+        case authToken, passwordResetToken, emailChangeToken, verificationToken, fileToken
+        case verificationTemplate, resetPasswordTemplate, confirmEmailChangeTemplate
+    }
+
+    /// Decodes a collection, collecting unknown keys into ``rawFields``.
+    ///
+    /// - Throws: An error if a decoding container cannot be opened.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = (try? container.decode(String.self, forKey: .id)) ?? ""
+        self.name = (try? container.decode(String.self, forKey: .name)) ?? ""
+        self.type = (try? container.decode(String.self, forKey: .type)) ?? ""
+        self.created = try? container.decode(String.self, forKey: .created)
+        self.updated = try? container.decode(String.self, forKey: .updated)
+        self.fields = (try? container.decode([CollectionField].self, forKey: .fields)) ?? []
+        self.indexes = (try? container.decode([String].self, forKey: .indexes)) ?? []
+        self.system = (try? container.decode(Bool.self, forKey: .system)) ?? false
+        self.listRule = try? container.decode(String.self, forKey: .listRule)
+        self.viewRule = try? container.decode(String.self, forKey: .viewRule)
+        self.createRule = try? container.decode(String.self, forKey: .createRule)
+        self.updateRule = try? container.decode(String.self, forKey: .updateRule)
+        self.deleteRule = try? container.decode(String.self, forKey: .deleteRule)
+        self.viewQuery = try? container.decode(String.self, forKey: .viewQuery)
+        self.authRule = try? container.decode(String.self, forKey: .authRule)
+        self.manageRule = try? container.decode(String.self, forKey: .manageRule)
+        self.authAlert = try? container.decode(AuthAlertConfig.self, forKey: .authAlert)
+        self.oauth2 = try? container.decode(OAuth2Config.self, forKey: .oauth2)
+        self.passwordAuth = try? container.decode(PasswordAuthConfig.self, forKey: .passwordAuth)
+        self.mfa = try? container.decode(MFAConfig.self, forKey: .mfa)
+        self.otp = try? container.decode(OTPConfig.self, forKey: .otp)
+        self.authToken = try? container.decode(TokenConfig.self, forKey: .authToken)
+        self.passwordResetToken = try? container.decode(TokenConfig.self, forKey: .passwordResetToken)
+        self.emailChangeToken = try? container.decode(TokenConfig.self, forKey: .emailChangeToken)
+        self.verificationToken = try? container.decode(TokenConfig.self, forKey: .verificationToken)
+        self.fileToken = try? container.decode(TokenConfig.self, forKey: .fileToken)
+        self.verificationTemplate = try? container.decode(EmailTemplate.self, forKey: .verificationTemplate)
+        self.resetPasswordTemplate = try? container.decode(EmailTemplate.self, forKey: .resetPasswordTemplate)
+        self.confirmEmailChangeTemplate = try? container.decode(EmailTemplate.self, forKey: .confirmEmailChangeTemplate)
+
+        let dynamicContainer = try decoder.container(keyedBy: DynamicCodingKey.self)
+        var extras: [String: AnyCodable] = [:]
+        for key in dynamicContainer.allKeys {
+            if CodingKeys(stringValue: key.stringValue) != nil {
+                continue
+            }
+            if let value = try? dynamicContainer.decode(AnyCodable.self, forKey: key) {
+                extras[key.stringValue] = value
+            }
+        }
+        self.rawFields = extras
+    }
+
+    /// Encodes the known properties together with the unknown keys in
+    /// ``rawFields``.
+    ///
+    /// Known properties take precedence: bag entries with a reserved key are
+    /// skipped, so no duplicate JSON keys are emitted.
+    ///
+    /// - Throws: An error if a dynamic value cannot be encoded.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(type, forKey: .type)
+        try container.encodeIfPresent(created, forKey: .created)
+        try container.encodeIfPresent(updated, forKey: .updated)
+        try container.encode(fields, forKey: .fields)
+        try container.encode(indexes, forKey: .indexes)
+        try container.encode(system, forKey: .system)
+        try container.encodeIfPresent(listRule, forKey: .listRule)
+        try container.encodeIfPresent(viewRule, forKey: .viewRule)
+        try container.encodeIfPresent(createRule, forKey: .createRule)
+        try container.encodeIfPresent(updateRule, forKey: .updateRule)
+        try container.encodeIfPresent(deleteRule, forKey: .deleteRule)
+        try container.encodeIfPresent(viewQuery, forKey: .viewQuery)
+        try container.encodeIfPresent(authRule, forKey: .authRule)
+        try container.encodeIfPresent(manageRule, forKey: .manageRule)
+        try container.encodeIfPresent(authAlert, forKey: .authAlert)
+        try container.encodeIfPresent(oauth2, forKey: .oauth2)
+        try container.encodeIfPresent(passwordAuth, forKey: .passwordAuth)
+        try container.encodeIfPresent(mfa, forKey: .mfa)
+        try container.encodeIfPresent(otp, forKey: .otp)
+        try container.encodeIfPresent(authToken, forKey: .authToken)
+        try container.encodeIfPresent(passwordResetToken, forKey: .passwordResetToken)
+        try container.encodeIfPresent(emailChangeToken, forKey: .emailChangeToken)
+        try container.encodeIfPresent(verificationToken, forKey: .verificationToken)
+        try container.encodeIfPresent(fileToken, forKey: .fileToken)
+        try container.encodeIfPresent(verificationTemplate, forKey: .verificationTemplate)
+        try container.encodeIfPresent(resetPasswordTemplate, forKey: .resetPasswordTemplate)
+        try container.encodeIfPresent(confirmEmailChangeTemplate, forKey: .confirmEmailChangeTemplate)
+
+        var dynamicContainer = encoder.container(keyedBy: DynamicCodingKey.self)
+        for (key, value) in rawFields where CodingKeys(stringValue: key) == nil {
+            if let codingKey = DynamicCodingKey(stringValue: key) {
+                try dynamicContainer.encode(value, forKey: codingKey)
+            }
+        }
     }
 }
 

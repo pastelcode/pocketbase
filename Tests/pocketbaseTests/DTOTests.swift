@@ -186,6 +186,72 @@ struct DTOTests {
         #expect(try roundTrip(collection) == collection)
     }
 
+    @Test func collectionFieldPreservesTypeSpecificOptions() throws {
+        let field: CollectionField = try decodeDTO(#"""
+        {
+            "id":"f1","name":"title","type":"text","system":false,"required":true,
+            "hidden":false,"presentable":true,
+            "min":3,"max":120,"pattern":"^[a-z]+$","autogeneratePattern":"",
+            "primaryKey":false,"options":{"choices":["a","b"]},"futureKey":"kept"
+        }
+        """#)
+
+        #expect(field.required == true)
+        #expect(field["min"]?.intValue == 3)
+        #expect(field["max"]?.intValue == 120)
+        #expect(field["pattern"]?.stringValue == "^[a-z]+$")
+        #expect(field["options"]?.dictionaryValue?["choices"]?.arrayValue?.map(\.stringValue) == ["a", "b"])
+        #expect(field["futureKey"]?.stringValue == "kept")
+
+        var copy = field
+        copy["maxSelect"] = AnyCodable(5)
+        #expect(copy.rawFields["maxSelect"]?.intValue == 5)
+
+        let roundTripped = try roundTrip(field)
+        #expect(roundTripped == field)
+        #expect(roundTripped.rawFields["options"]?.dictionaryValue?["choices"]?.arrayValue?.count == 2)
+    }
+
+    @Test func collectionFieldReservedBagKeysDoNotDuplicate() throws {
+        var field: CollectionField = try decodeDTO(#"{"id":"f1","name":"title","type":"text"}"#)
+        field.rawFields["id"] = AnyCodable("evil")
+        field.rawFields["required"] = AnyCodable(true)
+
+        let data = try JSONEncoder().encode(field)
+        let json = try #require(String(data: data, encoding: .utf8))
+        #expect(json.components(separatedBy: "\"id\":").count == 2)
+        #expect(json.components(separatedBy: "\"required\":").count == 2)
+
+        let decoded = try JSONDecoder().decode(CollectionField.self, from: data)
+        #expect(decoded.id == "f1")
+        #expect(decoded.required == false)
+    }
+
+    @Test func collectionModelPreservesTimestampsAndUnknownKeys() throws {
+        let collection: CollectionModel = try decodeDTO(#"""
+        {
+            "id":"c1","name":"posts","type":"base","system":false,
+            "created":"2026-01-01 00:00:00.000Z","updated":"2026-01-02 00:00:00.000Z",
+            "fields":[{
+                "id":"f1","name":"tags","type":"select","system":false,"required":false,
+                "hidden":false,"presentable":false,"maxSelect":3,"values":["a","b"]
+            }],
+            "indexes":[],"someFutureKey":{"nested":true}
+        }
+        """#)
+
+        #expect(collection.created == "2026-01-01 00:00:00.000Z")
+        #expect(collection.updated == "2026-01-02 00:00:00.000Z")
+        #expect(collection.rawFields["someFutureKey"]?.dictionaryValue?["nested"]?.boolValue == true)
+        #expect(collection.fields.first?["maxSelect"]?.intValue == 3)
+        #expect(collection.fields.first?["values"]?.arrayValue?.map(\.stringValue) == ["a", "b"])
+
+        let roundTripped = try roundTrip(collection)
+        #expect(roundTripped == collection)
+        #expect(roundTripped.rawFields["someFutureKey"] != nil)
+        #expect(roundTripped.fields.first?["maxSelect"]?.intValue == 3)
+    }
+
     // MARK: - Configuration DTOs
 
     @Test func configurationDTOsRoundTrip() throws {
