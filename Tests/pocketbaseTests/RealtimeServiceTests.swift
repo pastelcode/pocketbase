@@ -657,6 +657,24 @@ struct RealtimeServiceTests {
         #expect(RealtimeService.reconnectDelay(forAttempt: 99, serverRetryMilliseconds: 5000) == 5000)
     }
 
+    @Test func reconnectDelayFollowsTheReferenceBackoffTable() {
+        let expected: [Double] = [200, 300, 500, 1000, 1200, 1500, 2000]
+        #expect(RealtimeService.predefinedReconnectIntervals == expected)
+
+        for (attempt, delay) in expected.enumerated() {
+            #expect(RealtimeService.reconnectDelay(forAttempt: attempt, serverRetryMilliseconds: nil) == delay)
+            // A server retry below the base delay never shortens it.
+            #expect(RealtimeService.reconnectDelay(forAttempt: attempt, serverRetryMilliseconds: Int(delay) - 1) == delay)
+            // A server retry above the base delay always wins.
+            #expect(RealtimeService.reconnectDelay(forAttempt: attempt, serverRetryMilliseconds: Int(delay) + 1) == delay + 1)
+        }
+
+        // Attempts beyond the table keep using the last interval.
+        for attempt in expected.count..<(expected.count + 5) {
+            #expect(RealtimeService.reconnectDelay(forAttempt: attempt, serverRetryMilliseconds: nil) == 2000)
+        }
+    }
+
     @Test func serverRetryDelaysReconnect() async throws {
         let (client, transport, _) = makeClient()
         await installFetchMock(on: client)
