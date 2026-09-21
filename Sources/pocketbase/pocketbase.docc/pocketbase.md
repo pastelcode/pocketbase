@@ -24,6 +24,7 @@ The client exposes one service per PocketBase API group: ``PocketBase/collection
 ### Essentials
 
 - <doc:GettingStarted>
+- <doc:PublicAPI>
 - ``PocketBase``
 - ``SendOptions``
 - ``ClientResponseError``

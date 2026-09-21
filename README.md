@@ -1,21 +1,22 @@
-# Swift PocketBase SDK
+# PocketBase Swift SDK
 
-[![Swift 6.2](https://img.shields.io/badge/Swift-6.2-orange.svg)](https://swift.org)
-[![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS%20%7C%20tvOS%20%7C%20watchOS-blue.svg)](https://developer.apple.com/swift/)
+[![CI](https://github.com/pastelcode/pocketbase/actions/workflows/ci.yml/badge.svg)](https://github.com/pastelcode/pocketbase/actions/workflows/ci.yml)
+[![Swift 6.2+](https://img.shields.io/badge/Swift-6.2%2B-orange.svg)](https://swift.org)
+[![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20macOS%20%7C%20tvOS%20%7C%20watchOS%20%7C%20Android-blue.svg)](https://developer.apple.com/swift/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
 
-A modern, light-weight, fully-typed Swift SDK for [PocketBase](https://pocketbase.io). Built with Swift 6 Concurrency (`async/await`), thread-safe state management, and 100% feature parity with the official PocketBase JavaScript SDK.
+A modern, lightweight, fully typed Swift SDK for [PocketBase](https://pocketbase.io). Built with Swift 6 concurrency (`async`/`await`) and `Sendable`-safe state management, targeting broad behavioral parity with the official PocketBase JavaScript SDK. Intentional differences are listed in [Parity Notes](#-parity-notes).
 
 ---
 
 ## 🌟 Features
 
-- **Swift 6 & Concurrency**: Complete `async/await` async support with `Sendable` thread-safe architecture.
-- **Cross-Platform Support**: Works on iOS (15+), macOS (12+), tvOS (15+), watchOS (8+), and Swift Server (Vapor / Hummingbird).
-- **Automatic Auth Persistence**: Built-in `LocalAuthStore` using `UserDefaults` to persist authentication across app restarts. For production, back `AsyncAuthStore` with the Keychain (recommended).
+- **Swift 6 & Concurrency**: Complete `async`/`await` support with a `Sendable`-safe architecture.
+- **Cross-Platform Support**: Works on iOS (15+), macOS (12+), tvOS (15+), watchOS (8+), Android (via the Swift SDK for Android), and Swift server platforms (Vapor / Hummingbird).
+- **Automatic Auth Persistence**: `LocalAuthStore` keeps the auth state in `UserDefaults` on Apple platforms. `UserDefaults` is not persistent on Android and Linux — back `AsyncAuthStore` with your own storage there, or with the Keychain on Apple platforms (recommended for production).
 - **SSR & Cookie Support**: `loadFromCookie` and `exportToCookie` methods for Server-Side Rendering.
 - **Type-Safe Dynamic Fields**: [`AnyCodable`](Sources/pocketbase/Tools/AnyCodable.swift) helper for type-safe handling of dynamic JSON schema fields and expanded relations.
-- **Full API Parity**:
+- **Service Coverage**:
   - `RecordService` (CRUD, Password Auth, OAuth2, OTP, Password Reset, Email Verification, Email Change, Impersonation)
   - `CollectionService` (Schemas, Scaffolding, Import, Truncate, Dry-Run View Query)
   - `FileService` (URL generation, Token generation)
@@ -26,6 +27,12 @@ A modern, light-weight, fully-typed Swift SDK for [PocketBase](https://pocketbas
 ---
 
 ## 📦 Installation
+
+### Requirements
+
+- **Swift 6.2 or later** (declared by `// swift-tools-version: 6.2` in `Package.swift`).
+- Apple platforms: Xcode 16.4 or later; the minimum deployment targets are iOS 15, macOS 12, tvOS 15 and watchOS 8.
+- Android: the [Swift SDK for Android](https://swift.org/documentation/articles/swift-sdk-for-android-getting-started.html) and Android NDK 27d or later. See [CONTRIBUTING.md](CONTRIBUTING.md#android) for the full setup and test procedure.
 
 ### Swift Package Manager (SPM)
 
@@ -41,6 +48,14 @@ A modern, light-weight, fully-typed Swift SDK for [PocketBase](https://pocketbas
 ```swift
 dependencies: [
     .package(url: "https://github.com/pastelcode/pocketbase.git", from: "0.1.0")
+],
+targets: [
+    .target(
+        name: "MyApp",
+        dependencies: [
+            .product(name: "pocketbase", package: "pocketbase")
+        ]
+    )
 ]
 ```
 
@@ -62,7 +77,7 @@ let pb = PocketBase(baseURL: "https://example.com")
 ```swift
 // Authenticate with Username/Email & Password
 do {
-    let authData = try await pb.collection("users").authWithPassword(
+    let authData: RecordAuthResponse<RecordModel> = try await pb.collection("users").authWithPassword(
         usernameOrEmail: "test@example.com",
         password: "password123"
     )
@@ -85,16 +100,16 @@ pb.authStore.clear()
 
 ```swift
 // Fetch paginated records
-let result = try await pb.collection("posts").getList(page: 1, perPage: 20)
+let result: ListResult<RecordModel> = try await pb.collection("posts").getList(page: 1, perPage: 20)
 for post in result.items {
     print("Post ID: \(post.id), Title: \(post["title"]?.stringValue ?? "")")
 }
 
 // Fetch single record by ID
-let post = try await pb.collection("posts").getOne(id: "RECORD_ID")
+let post: RecordModel = try await pb.collection("posts").getOne(id: "RECORD_ID")
 
 // Create a new record
-let newPost = try await pb.collection("posts").create(
+let newPost: RecordModel = try await pb.collection("posts").create(
     bodyParams: .json([
         "title": AnyCodable("My First Post"),
         "content": AnyCodable("Hello World!"),
@@ -103,7 +118,7 @@ let newPost = try await pb.collection("posts").create(
 )
 
 // Update an existing record
-let updatedPost = try await pb.collection("posts").update(
+let updatedPost: RecordModel = try await pb.collection("posts").update(
     id: newPost.id,
     bodyParams: .json([
         "title": AnyCodable("Updated Title")
@@ -149,7 +164,7 @@ struct PostListView: View {
     func loadPosts() async {
         isLoading = true
         do {
-            let result = try await pb.collection("posts").getList(page: 1, perPage: 30)
+            let result: ListResult<RecordModel> = try await pb.collection("posts").getList(page: 1, perPage: 30)
             self.posts = result.items
         } catch {
             print("Error: \(error)")
@@ -165,7 +180,7 @@ struct PostListView: View {
 
 ```swift
 // Subscribe to all changes in a collection
-let unsub = try await pb.collection("posts").subscribe(topic: "*") { event in
+let unsub = try await pb.collection("posts").subscribe(topic: "*") { (event: RecordSubscription<RecordModel>) in
     print("Action: \(event.action)") // "create", "update", "delete"
     print("Record ID: \(event.record.id)")
 }
@@ -196,11 +211,20 @@ let batchResults = try await batch.send()
 
 ## 🔁 Parity Notes
 
-The SDK targets feature parity with the reference JavaScript SDK. A few platform differences are intentional:
+The SDK targets broad behavioral parity with the reference JavaScript SDK (v0.28.1). The following differences are intentional and documented:
 
 - **Cancellation**: cancellation aborts the wrapping Swift `Task`. A `CustomFetch` closure is not handed an `AbortSignal`, so a closure that ignores task cancellation keeps running; the default `URLSession` transport is fully cancellable. Requests are registered for auto-cancellation before `beforeSend` runs, so a slow hook cannot invert same-key supersession.
 - **Legacy options**: the JavaScript-only `$autoCancel` / `$cancelKey` options (and their query-parameter forms) are replaced by `SendOptions.autoCancel` and `SendOptions.requestKey`; `params` is replaced by `SendOptions.query`; and `signal` / `AbortSignal` is not exposed. Abort the wrapping task with `cancelRequest(_:)` / `cancelAllRequests()` instead.
-- **Hooks**: `beforeSend` must return `{ url, options }`; the deprecated options-only return shape is not supported.
+- **Hooks**: `beforeSend` must return `{ url, options }`; the deprecated options-only return shape is not supported. Errors thrown by request hooks are wrapped as `ClientResponseError`.
+- **JWT expiration**: `JWTUtils.isTokenExpired` and `BaseAuthStore.isValid` fail closed — a token is invalid unless it is a well-formed three-segment JWT with a numeric (or numeric-string) `exp` claim in the future. The JS SDK treats a missing or falsy `exp` as "never expires".
+- **Cookies**: `CookieUtils` / `exportToCookie` throw a `CookieSerializeError` for invalid names or values instead of silently sanitizing them.
+- **OAuth2**: the interactive `authWithOAuth2` flow requires a `urlCallback` so the SDK stays free of UI framework dependencies; the JS SDK opens a popup itself.
+- **Realtime**: a server-directed SSE `retry:` value acts as a backoff floor and disables jitter (the JS SDK ignores `retry:` for its custom reconnect), and `subscribe` takes `options` before the callback. `handleMessage(event:id:data:)` stays public for manual frame injection.
+- **FormData**: there is no automatic object-to-`FormData` conversion; use `.form` with `FileParam` for multipart bodies. The server-side string inference rules (`"true"`, numeric strings) are not applied by `convertFormDataToObject`, because there is no such helper — `.form` values keep their Swift types.
+- **Collections**: the JS union types are flattened into a single `CollectionModel` with a `CollectionType` accessor; unknown collection/field keys are preserved through import.
+- **Legacy signatures**: the deprecated positional overloads (for example `getFullList(batch, options)`) are not ported; use the options-based API.
+
+See the <doc:PublicAPI> article in the DocC documentation for the supported surface.
 
 ---
 
@@ -209,21 +233,20 @@ The SDK targets feature parity with the reference JavaScript SDK. A few platform
 Cookies are only used for the SSR handoff between a browser and your Swift server: `loadFromCookie` restores the auth state from the request's `Cookie` header, and `exportToCookie` produces the `Set-Cookie` value returned to the browser. Native iOS/Android clients don't need cookies — the token is sent as an `Authorization` header on every request, including realtime.
 
 ```swift
-// Per-request PocketBase instance
+// Per-request PocketBase instance; keep the auth state in memory on the server.
 let pb = PocketBase(baseURL: "https://example.com", authStore: BaseAuthStore())
 
-// Load auth from request Cookie header
-if let cookieHeader = req.headers["Cookie"].first {
-    pb.authStore.loadFromCookie(cookieHeader)
-}
+// Restore the auth state from the request's "Cookie" header
+// (in Vapor: req.headers.first(name: "Cookie")).
+pb.authStore.loadFromCookie(cookieHeader)
 
-// Use PocketBase with authenticated user context...
+// ...run server-side queries with the authenticated user context...
 
-// Export cookie to set on response header
-let setCookieHeader = try pb.authStore.exportToCookie(
+// Produce the Set-Cookie value for the response
+// (in Vapor: res.headers.add(name: "Set-Cookie", value: setCookie)).
+let setCookie = try pb.authStore.exportToCookie(
     options: CookieSerializeOptions(httpOnly: true, secure: true, sameSite: .strict)
 )
-res.headers.add(name: "Set-Cookie", value: setCookieHeader)
 ```
 
 ---
@@ -241,7 +264,13 @@ API reference docs are generated with [DocC](https://www.swift.org/documentation
 
   The generated `pocketbase.doccarchive` can be opened in Xcode or served with `docc preview`.
 
-The catalog includes getting started, authentication, realtime and queries/filtering articles.
+The catalog includes getting started, authentication, data models, realtime, queries/filtering and public API articles.
+
+---
+
+## 🤝 Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup and the full macOS, iOS Simulator and Android test matrix. All tests run in CI on every push and pull request.
 
 ---
 

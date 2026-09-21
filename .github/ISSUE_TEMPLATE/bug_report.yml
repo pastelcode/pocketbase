@@ -1,0 +1,84 @@
+name: Bug report
+description: Report a bug in the PocketBase Swift SDK
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much detail as possible so the issue can be reproduced quickly.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you start
+      options:
+        - label: I have searched the existing issues and this bug is not already reported.
+          required: true
+        - label: I am using the latest release of the SDK.
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened, and what did you expect to happen instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: The smallest code sample or step-by-step sequence that reproduces the problem.
+      render: swift
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: SDK version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: toolchain
+    attributes:
+      label: Swift / Xcode version
+      placeholder: "Swift 6.4, Xcode 27.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform(s)
+      multiple: true
+      options:
+        - iOS
+        - macOS
+        - tvOS
+        - watchOS
+        - Android
+        - Linux / server
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or errors
+      description: Paste any error output, including the `ClientResponseError` details if applicable.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else that might help, such as a PocketBase server version or a related issue.
+    validations:
+      required: false

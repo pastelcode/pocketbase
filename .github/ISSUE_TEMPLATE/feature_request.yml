@@ -1,0 +1,67 @@
+name: Feature request
+description: Suggest a new feature or an improvement to the PocketBase Swift SDK
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement. Please describe the problem first, then the proposed solution.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you start
+      options:
+        - label: I have searched the existing issues and this request is not already covered.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what makes it difficult or impossible today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe the API or behavior you would like to see.
+      render: swift
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds or other approaches you have tried.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Client / transport
+        - Auth / stores
+        - Records / collections
+        - Realtime
+        - Batch
+        - Admin services
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links to the JavaScript/Dart SDK behavior, PocketBase documentation or prior art.
+    validations:
+      required: false

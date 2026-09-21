@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS tests & documentation
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Run tests
+        run: swift test
+
+      - name: Build documentation
+        run: |
+          xcodebuild docbuild \
+            -scheme pocketbase \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/docc"
+
+      - name: Check documentation diagnostics
+        run: |
+          diag=$(find "$RUNNER_TEMP/docc" -name 'pocketbase-diagnostics.json' -print -quit)
+          if [ -z "$diag" ]; then
+            echo "::error::pocketbase-diagnostics.json not found"
+            exit 1
+          fi
+          python3 - "$diag" <<'PY'
+          import json
+          import sys
+
+          diagnostics = json.load(open(sys.argv[1])).get("diagnostics", [])
+          issues = [d for d in diagnostics if d.get("severity") not in ("information", None)]
+          for issue in issues:
+              print(f"{issue.get('severity')}: {issue.get('summary')}")
+          print(f"diagnostics: {len(diagnostics)}, warnings/errors: {len(issues)}")
+          sys.exit(1 if issues else 0)
+          PY
+
+  android:
+    name: Android build & tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build and test on Android
+        uses: skiptools/swift-android-action@v2
+        with:
+          swift-version: '6.4'
+          android-api-level: '28'
+          free-disk-space: true

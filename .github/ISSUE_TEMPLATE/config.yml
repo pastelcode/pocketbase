@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/pastelcode/pocketbase/blob/main/README.md
+    about: Read the README, the DocC guides and the parity notes before opening an issue.
+  - name: Contributing guide
+    url: https://github.com/pastelcode/pocketbase/blob/main/CONTRIBUTING.md
+    about: Development setup, the test matrix and the conventions used in this repository.
+  - name: Report a vulnerability
+    url: https://github.com/pastelcode/pocketbase/security/advisories/new
+    about: Please report security issues privately, never in a public issue.
