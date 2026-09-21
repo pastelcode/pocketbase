@@ -42,12 +42,12 @@ A modern, lightweight, fully typed Swift SDK for [PocketBase](https://pocketbase
    ```text
    https://github.com/pastelcode/pocketbase.git
    ```
-3. Set **Dependency Rule** to `Up to Next Major Version` from `0.1.0`.
+3. Set **Dependency Rule** to `Up to Next Major Version` from `0.2.0`.
 
 #### In `Package.swift`:
 ```swift
 dependencies: [
-    .package(url: "https://github.com/pastelcode/pocketbase.git", from: "0.1.0")
+    .package(url: "https://github.com/pastelcode/pocketbase.git", from: "0.2.0")
 ],
 targets: [
     .target(

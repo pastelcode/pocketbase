@@ -2,7 +2,7 @@
 
 All notable changes to `pocketbase` will be documented in this file.
 
-## [Unreleased]
+## [0.2.0] - 2026-09-21
 
 ### Added
 
