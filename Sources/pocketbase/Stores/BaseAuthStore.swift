@@ -39,12 +39,6 @@ open class BaseAuthStore: @unchecked Sendable {
         return _record
     }
 
-    /// Alias for record.
-    @available(*, deprecated, message: "Use record instead.")
-    open var model: RecordModel? {
-        return record
-    }
-
     /// Checks whether the store has a usable, unexpired token.
     ///
     /// Equivalent to negating ``JWTUtils/isTokenExpired(_:expirationThreshold:)``:
@@ -78,21 +72,6 @@ open class BaseAuthStore: @unchecked Sendable {
         }
 
         return false
-    }
-
-    /// A deprecated alias for ``isSuperuser``.
-    @available(*, deprecated, message: "Use isSuperuser instead.")
-    open var isAdmin: Bool {
-        return isSuperuser
-    }
-
-    /// A deprecated check for non-superuser auth records.
-    ///
-    /// - Important: Use `!isSuperuser` instead.
-    @available(*, deprecated, message: "Use !isSuperuser instead.")
-    open var isAuthRecord: Bool {
-        let payload = JWTUtils.getTokenPayload(token)
-        return payload["type"]?.value.string == "auth" && !isSuperuser
     }
 
     /// Saves the provided new token and record data in the auth store and

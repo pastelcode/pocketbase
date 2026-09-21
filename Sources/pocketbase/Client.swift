@@ -119,11 +119,6 @@ open class PocketBase: @unchecked Sendable {
         self.sql = SQLService(self)
     }
 
-    /// Convenience accessor for the built-in `_superusers` collection.
-    open var admins: RecordService<RecordModel> {
-        return collection("_superusers")
-    }
-
     /// Returns the record service for the collection with the given id or name.
     ///
     /// Services are cached per collection and model type, so repeated calls
@@ -325,19 +320,6 @@ open class PocketBase: @unchecked Sendable {
         case .array, .dictionary:
             return jsonEscapedString(jsonStringify(value))
         }
-    }
-
-    /// Builds the URL for a file stored in a record.
-    ///
-    /// - Parameters:
-    ///   - record: The record that owns the file.
-    ///   - filename: The stored filename.
-    ///   - queryParams: Additional query parameters such as `thumb` or `token`.
-    /// - Returns: The absolute file URL.
-    /// - Important: Deprecated. Use ``FileService/getURL(record:filename:queryParams:)`` instead.
-    @available(*, deprecated, message: "Use files.getURL instead.")
-    open func getFileUrl(record: RecordModel, filename: String, queryParams: [String: AnyCodable] = [:]) -> String {
-        return files.getURL(record: record, filename: filename, queryParams: queryParams)
     }
 
     /// Joins a path with the client's base URL.
