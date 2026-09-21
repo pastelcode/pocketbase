@@ -42,12 +42,12 @@ A modern, lightweight, fully typed Swift SDK for [PocketBase](https://pocketbase
    ```text
    https://github.com/pastelcode/pocketbase.git
    ```
-3. Set **Dependency Rule** to `Up to Next Major Version` from `0.1.0`.
+3. Set **Dependency Rule** to `Up to Next Major Version` from `0.2.0`.
 
 #### In `Package.swift`:
 ```swift
 dependencies: [
-    .package(url: "https://github.com/pastelcode/pocketbase.git", from: "0.1.0")
+    .package(url: "https://github.com/pastelcode/pocketbase.git", from: "0.2.0")
 ],
 targets: [
     .target(
@@ -222,7 +222,7 @@ The SDK targets broad behavioral parity with the reference JavaScript SDK (v0.28
 - **Realtime**: a server-directed SSE `retry:` value acts as a backoff floor and disables jitter (the JS SDK ignores `retry:` for its custom reconnect), and `subscribe` takes `options` before the callback. `handleMessage(event:id:data:)` stays public for manual frame injection.
 - **FormData**: there is no automatic object-to-`FormData` conversion; use `.form` with `FileParam` for multipart bodies. The server-side string inference rules (`"true"`, numeric strings) are not applied by `convertFormDataToObject`, because there is no such helper — `.form` values keep their Swift types.
 - **Collections**: the JS union types are flattened into a single `CollectionModel` with a `CollectionType` accessor; unknown collection/field keys are preserved through import.
-- **Legacy signatures**: the deprecated positional overloads (for example `getFullList(batch, options)`) are not ported; use the options-based API.
+- **Legacy signatures and aliases**: the deprecated positional overloads (for example `getFullList(batch, options)`) and the JS compatibility aliases (`model`, `isAdmin`, `isAuthRecord`, `admins`, `getFileUrl`, `getUrl`) are not ported; use `record`, `isSuperuser`, `collection("_superusers")` and `files.getURL` instead.
 
 See the <doc:PublicAPI> article in the DocC documentation for the supported surface.
 

@@ -4,19 +4,6 @@ import Foundation
 open class FileService: BaseService, @unchecked Sendable {
     /// Builds the URL of a record file.
     ///
-    /// - Parameter record: The record that owns the file.
-    /// - Parameter filename: The stored file name.
-    /// - Parameter queryParams: Additional query parameters, such as `thumb` or `token`.
-    /// - Returns: The file URL, or an empty string when required identifiers are missing.
-    ///
-    /// - Important: Deprecated. Use ``getURL(record:filename:queryParams:)`` instead.
-    @available(*, deprecated, message: "Use getURL instead.")
-    open func getUrl(record: RecordModel, filename: String, queryParams: [String: AnyCodable] = [:]) -> String {
-        return getURL(record: record, filename: filename, queryParams: queryParams)
-    }
-
-    /// Builds the URL of a record file.
-    ///
     /// The returned URL has the shape
     /// `{baseURL}/api/files/{collectionIdOrName}/{recordId}/{filename}`, with any
     /// query parameters appended.
