@@ -29,7 +29,7 @@ The client exposes one service per PocketBase API group: ``PocketBase/collection
 - ``SendOptions``
 - ``ClientResponseError``
 
-### Authentication
+### Authentication and stores
 
 - <doc:Authentication>
 - ``BaseAuthStore``
@@ -46,7 +46,7 @@ The client exposes one service per PocketBase API group: ``PocketBase/collection
 - ``CollectionModel``
 - ``ListResult``
 
-### Realtime
+### Realtime subscriptions
 
 - <doc:Realtime>
 - ``RealtimeService``
